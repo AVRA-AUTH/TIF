@@ -1,0 +1,118 @@
+<?xml version="1.0" ?>
+<sdf version="1.8">
+  <world name="exhibition_water_world">
+    <physics name="1ms" type="ignored">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+
+    <plugin filename="ignition-gazebo-physics-system" name="ignition::gazebo::systems::Physics"></plugin>
+    <plugin filename="ignition-gazebo-user-commands-system" name="ignition::gazebo::systems::UserCommands"></plugin>
+    <plugin filename="ignition-gazebo-scene-broadcaster-system" name="ignition::gazebo::systems::SceneBroadcaster"></plugin>
+    <plugin filename="ignition-gazebo-sensors-system" name="ignition::gazebo::systems::Sensors">
+      <render_engine>ogre</render_engine>
+    </plugin>
+
+    <!-- Sun Light -->
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <!-- Water Plane Visual -->
+    <model name="water_plane">
+      <static>true</static>
+      <pose>0 0 0 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>200 200</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.0 0.3 0.6 0.8</ambient>
+            <diffuse>0.0 0.4 0.8 0.8</diffuse>
+            <specular>0.5 0.5 0.5 0.8</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ASV (Autonomous Surface Vehicle) Boat Model -->
+    <model name="asv_boat">
+      <pose>0 0 0.2 0 0 0</pose>
+      <link name="base_link">
+        <inertial>
+          <mass>50.0</mass>
+          <pose>0 0 0 0 0 0</pose>
+          <inertia>
+            <ixx>10.0</ixx>
+            <ixy>0</ixy>
+            <ixz>0</ixz>
+            <iyy>10.0</iyy>
+            <iyz>0</iyz>
+            <izz>15.0</izz>
+          </inertia>
+        </inertial>
+
+        <visual name="hull_visual">
+          <pose>0 0 0 0 0 0</pose>
+          <geometry><box><size>2.5 1.2 0.5</size></box></geometry>
+          <material><ambient>0.9 0.1 0.1 1.0</ambient><diffuse>0.9 0.1 0.1 1.0</diffuse></material>
+        </visual>
+
+        <collision name="hull_collision">
+          <geometry><box><size>2.5 1.2 0.5</size></box></geometry>
+        </collision>
+
+        <visual name="cabin_visual">
+          <pose>-0.3 0 0.5 0 0 0</pose>
+          <geometry><box><size>1.0 0.8 0.5</size></box></geometry>
+          <material><ambient>0.8 0.8 0.8 1.0</ambient><diffuse>0.8 0.8 0.8 1.0</diffuse></material>
+        </visual>
+
+        <sensor name="gpu_lidar" type="gpu_lidar">
+          <pose>1.4 0 1.4 0 0 0</pose>
+          <topic>/scan</topic>
+          <update_rate>10</update_rate>
+          <lidar>
+            <scan>
+              <horizontal>
+                <samples>360</samples>
+                <resolution>1</resolution>
+                <min_angle>-3.14159</min_angle>
+                <max_angle>3.14159</max_angle>
+              </horizontal>
+            </scan>
+            <range>
+              <min>1.0</min>
+              <max>30.0</max>
+              <resolution>0.01</resolution>
+            </range>
+          </lidar>
+          <always_on>1</always_on>
+          <visualize>true</visualize>
+        </sensor>
+      </link>
+
+      <!-- Enable Velocity Control for /cmd_vel -->
+      <plugin filename="ignition-gazebo-velocity-control-system" name="ignition::gazebo::systems::VelocityControl">
+        <topic>/cmd_vel</topic>
+        <link_name>base_link</link_name>
+      </plugin>
+
+      <!-- Publish Odometry to /odom -->
+      <plugin filename="ignition-gazebo-odometry-publisher-system" name="ignition::gazebo::systems::OdometryPublisher">
+        <odom_topic>/odom</odom_topic>
+        <odom_frame>odom</odom_frame>
+        <robot_base_frame>base_link</robot_base_frame>
+        <dimensions>3</dimensions>
+      </plugin>
+    </model>
+  </world>
+</sdf>

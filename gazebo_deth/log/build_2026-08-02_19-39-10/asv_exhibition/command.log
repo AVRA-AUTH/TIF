@@ -1,0 +1,2 @@
+Invoking command in '/mnt/c/Users/user/gazebo_deth/build/asv_exhibition': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake /mnt/c/Users/user/gazebo_deth/src/asv_exhibition -DCMAKE_INSTALL_PREFIX=/mnt/c/Users/user/gazebo_deth/install/asv_exhibition
+Invoked command in '/mnt/c/Users/user/gazebo_deth/build/asv_exhibition' returned '1': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake /mnt/c/Users/user/gazebo_deth/src/asv_exhibition -DCMAKE_INSTALL_PREFIX=/mnt/c/Users/user/gazebo_deth/install/asv_exhibition

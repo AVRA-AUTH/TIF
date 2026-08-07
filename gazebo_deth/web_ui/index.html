@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ASV Exhibition Simulator - 3D FPV & Tactical Level Designer</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- ROSLibJS & Three.js for 3D FPV Ocean View -->
+    <script type="text/javascript"
+        src="https://cdn.jsdelivr.net/npm/eventemitter2@6.4.9/lib/eventemitter2.min.js"></script>
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/roslib@1/build/roslib.min.js"></script>
+    <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+
+<body>
+    <div id="app">
+        <header>
+            <h1>🚤 ASV Exhibition Simulator</h1>
+            <div class="mode-selector">
+                <button id="mode1-btn" class="mode-btn active">Mode 1: Level Designer & Auto Nav</button>
+                <button id="mode2-btn" class="mode-btn">Mode 2: Joystick Drive</button>
+                <button id="mode3-btn" class="mode-btn">Mode 3: Autonomous Docking</button>
+            </div>
+            <div id="status" class="disconnected">Connecting to ROS...</div>
+        </header>
+
+        <div id="game-container">
+            <div id="toolbar">
+                <div id="mode1-tools">
+                    <h3>1. Design Level (80m x 60m Area)</h3>
+                    <button id="btn-static-buoy" class="tool-btn active" data-type="static">🟡 Place Yellow
+                        Buoy</button>
+                    <button id="btn-moving-boat" class="tool-btn" data-type="dynamic">🚢 Place Moving Boat</button>
+                    <button id="btn-goal" class="tool-btn" data-type="goal">🏁 Set Target Goal</button>
+
+                    <h3 style="margin-top: 1.5rem;">2. Run Simulation</h3>
+                    <button id="btn-run" class="action-btn green">▶️ RUN ASV DEMO</button>
+                    <button id="btn-reset" class="action-btn red">🛑 STOP & RESET ALL</button>
+                </div>
+
+                <div id="mode2-tools" style="display: none;">
+                    <h3>Manual Joystick Controls</h3>
+                    <p class="help-text">Use <b>W A S D</b> or <b>Arrow Keys</b> on your keyboard to drive the ASV boat
+                        in Gazebo!</p>
+                    <div class="dpad">
+                        <button id="btn-up" class="dbtn">▲ (W)</button>
+                        <div class="dpad-row">
+                            <button id="btn-left" class="dbtn">◄ (A)</button>
+                            <button id="btn-stop" class="dbtn stop">STOP</button>
+                            <button id="btn-right" class="dbtn">► (D)</button>
+                        </div>
+                        <button id="btn-down" class="dbtn">▼ (S)</button>
+                    </div>
+                </div>
+
+                <div id="mode3-tools" style="display: none;">
+                    <h3>Autonomous Docking System</h3>
+                    <p class="help-text">Click anywhere near a pier edge on the zoomed-in 2D Marina Map to select your dynamic parking spot!</p>
+                    
+                    <label for="dock-type-selector" style="color: #00ffcc; font-weight: bold; display: block; margin-top: 0.6rem;">Preferred Parking Style:</label>
+                    <select id="dock-type-selector" style="width: 100%; padding: 8px; margin-top: 4px; background: #1b263b; color: #ffffff; border: 1px solid #00ffcc; border-radius: 4px; font-weight: bold; cursor: pointer;">
+                        <option value="parallel" selected>↔️ Side-Docking (Parallel)</option>
+                        <option value="slip">↕️ Bow-In Docking (Perpendicular)</option>
+                    </select>
+
+                    <div style="background: #1b263b; padding: 10px; border-radius: 4px; border: 1px solid #00ffcc; margin-top: 10px;">
+                        <p style="margin: 0; font-size: 0.85rem; color: #a0c4ff;"><strong>Perception Active:</strong></p>
+                        <p style="margin: 5px 0 0 0; font-size: 0.8rem; color: #ffffff;">The system will automatically detect the pier orientation and check for obstacles (parked boats) before executing a realistic parallel or bow-in docking maneuver.</p>
+                    </div>
+
+                    <button id="btn-reset-dock" class="action-btn red" style="margin-top: 1rem;">🛑 STOP & CANCEL DOCKING</button>
+                </div>
+
+                <div class="telemetry">
+                    <h4>ASV Telemetry</h4>
+                    <p>Status: <span id="tele-status" style="color: #ffc107;">Design Phase</span></p>
+                    <p>X: <span id="tele-x">0.00</span> m</p>
+                    <p>Y: <span id="tele-y">0.00</span> m</p>
+                    <p>Speed: <span id="tele-speed">0.00</span> m/s</p>
+                </div>
+            </div>
+
+            <div id="viewport-container">
+                <!-- 2D Tactical Map View -->
+                <div class="view-panel">
+                    <div class="panel-header">2D Tactical Map (Zoomed Out)</div>
+                    <canvas id="mapCanvas" width="550" height="500"></canvas>
+                </div>
+
+                <!-- 3D Realistic FPV View -->
+                <div class="view-panel">
+                    <div class="panel-header">3D Realistic FPV View (Boat Camera)</div>
+                    <div id="threejs-container"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+
+</html>

@@ -1,0 +1,98 @@
+[0.171s] Invoking command in '/mnt/c/Users/user/gazebo_deth/build/asv_exhibition': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake /mnt/c/Users/user/gazebo_deth/src/asv_exhibition -DCMAKE_INSTALL_PREFIX=/mnt/c/Users/user/gazebo_deth/install/asv_exhibition
+[0.260s] -- Found ament_cmake: 1.3.14 (/opt/ros/humble/share/ament_cmake/cmake)
+[0.321s] [31mCMake Error at /opt/ros/humble/share/ament_cmake_core/cmake/core/stamp.cmake:24 (configure_file):
+[0.322s]   Operation not permitted
+[0.324s] Call Stack (most recent call first):
+[0.325s]   /opt/ros/humble/share/ament_cmake_core/cmake/ament_cmake_package_templates-extras.cmake:24 (stamp)
+[0.327s]   /opt/ros/humble/share/ament_cmake_core/cmake/ament_cmake_coreConfig.cmake:41 (include)
+[0.330s]   /opt/ros/humble/share/ament_cmake/cmake/ament_cmake_export_dependencies-extras.cmake:15 (find_package)
+[0.332s]   /opt/ros/humble/share/ament_cmake/cmake/ament_cmakeConfig.cmake:41 (include)
+[0.333s]   CMakeLists.txt:4 (find_package)
+[0.335s] 
+[0.336s] [0m
+[0.428s] [31mCMake Error at /opt/ros/humble/share/ament_cmake_core/cmake/ament_cmake_uninstall_target-extras.cmake:28 (configure_file):
+[0.429s]   Operation not permitted
+[0.430s] Call Stack (most recent call first):
+[0.431s]   /opt/ros/humble/share/ament_cmake_core/cmake/ament_cmake_coreConfig.cmake:41 (include)
+[0.432s]   /opt/ros/humble/share/ament_cmake/cmake/ament_cmake_export_dependencies-extras.cmake:15 (find_package)
+[0.433s]   /opt/ros/humble/share/ament_cmake/cmake/ament_cmakeConfig.cmake:41 (include)
+[0.434s]   CMakeLists.txt:4 (find_package)
+[0.435s] 
+[0.436s] [0m
+[0.467s] [31mCMake Error at /opt/ros/humble/share/ament_cmake_test/cmake/ament_cmake_test-extras.cmake:34 (configure_file):
+[0.468s]   Operation not permitted
+[0.470s] Call Stack (most recent call first):
+[0.471s]   /opt/ros/humble/share/ament_cmake_test/cmake/ament_cmake_testConfig.cmake:41 (include)
+[0.473s]   /opt/ros/humble/share/ament_cmake/cmake/ament_cmake_export_dependencies-extras.cmake:21 (find_package)
+[0.475s]   /opt/ros/humble/share/ament_cmake/cmake/ament_cmakeConfig.cmake:41 (include)
+[0.476s]   CMakeLists.txt:4 (find_package)
+[0.477s] 
+[0.479s] [0m
+[0.587s] [31mCMake Error at /opt/ros/humble/share/ament_cmake_core/cmake/core/stamp.cmake:24 (configure_file):
+[0.589s]   Operation not permitted
+[0.591s] Call Stack (most recent call first):
+[0.592s]   /opt/ros/humble/share/ament_cmake_core/cmake/core/ament_package_xml.cmake:73 (stamp)
+[0.593s]   /opt/ros/humble/share/ament_cmake_core/cmake/core/ament_package_xml.cmake:49 (_ament_package_xml)
+[0.595s]   /opt/ros/humble/share/ament_cmake_core/cmake/core/ament_package.cmake:63 (ament_package_xml)
+[0.598s]   CMakeLists.txt:21 (ament_package)
+[0.601s] 
+[0.602s] [0m
+[0.642s] [31mCMake Error at /opt/ros/humble/share/ament_cmake_core/cmake/core/stamp.cmake:24 (configure_file):
+[0.644s]   Operation not permitted
+[0.645s] Call Stack (most recent call first):
+[0.647s]   /opt/ros/humble/share/ament_cmake_core/cmake/environment_hooks/ament_environment_hooks.cmake:37 (stamp)
+[0.649s]   /opt/ros/humble/share/ament_cmake_core/cmake/environment_hooks/ament_cmake_environment_hooks_package_hook.cmake:20 (ament_environment_hooks)
+[0.650s]   /opt/ros/humble/share/ament_cmake_core/cmake/core/ament_execute_extensions.cmake:48 (include)
+[0.652s]   /opt/ros/humble/share/ament_cmake_core/cmake/core/ament_package.cmake:66 (ament_execute_extensions)
+[0.653s]   CMakeLists.txt:21 (ament_package)
+[0.654s] 
+[0.655s] [0m
+[0.698s] [31mCMake Error at /opt/ros/humble/share/ament_cmake_core/cmake/core/stamp.cmake:24 (configure_file):
+[0.700s]   Operation not permitted
+[0.702s] Call Stack (most recent call first):
+[0.704s]   /opt/ros/humble/share/ament_cmake_core/cmake/environment_hooks/ament_environment_hooks.cmake:37 (stamp)
+[0.705s]   /opt/ros/humble/share/ament_cmake_core/cmake/environment_hooks/ament_cmake_environment_hooks_package_hook.cmake:20 (ament_environment_hooks)
+[0.706s]   /opt/ros/humble/share/ament_cmake_core/cmake/core/ament_execute_extensions.cmake:48 (include)
+[0.708s]   /opt/ros/humble/share/ament_cmake_core/cmake/core/ament_package.cmake:66 (ament_execute_extensions)
+[0.709s]   CMakeLists.txt:21 (ament_package)
+[0.711s] 
+[0.712s] [0m
+[0.765s] [31mCMake Error at /opt/ros/humble/share/ament_cmake_core/cmake/environment_hooks/ament_generate_package_environment.cmake:73 (configure_file):
+[0.767s]   Operation not permitted
+[0.768s] Call Stack (most recent call first):
+[0.770s]   /opt/ros/humble/share/ament_cmake_core/cmake/environment_hooks/ament_cmake_environment_hooks_package_hook.cmake:26 (ament_generate_package_environment)
+[0.771s]   /opt/ros/humble/share/ament_cmake_core/cmake/core/ament_execute_extensions.cmake:48 (include)
+[0.772s]   /opt/ros/humble/share/ament_cmake_core/cmake/core/ament_package.cmake:66 (ament_execute_extensions)
+[0.774s]   CMakeLists.txt:21 (ament_package)
+[0.776s] 
+[0.777s] [0m
+[0.836s] [31mCMake Error at /opt/ros/humble/share/ament_cmake_core/cmake/environment_hooks/ament_generate_package_environment.cmake:73 (configure_file):
+[0.837s]   Operation not permitted
+[0.839s] Call Stack (most recent call first):
+[0.840s]   /opt/ros/humble/share/ament_cmake_core/cmake/environment_hooks/ament_cmake_environment_hooks_package_hook.cmake:26 (ament_generate_package_environment)
+[0.842s]   /opt/ros/humble/share/ament_cmake_core/cmake/core/ament_execute_extensions.cmake:48 (include)
+[0.843s]   /opt/ros/humble/share/ament_cmake_core/cmake/core/ament_package.cmake:66 (ament_execute_extensions)
+[0.845s]   CMakeLists.txt:21 (ament_package)
+[0.846s] 
+[0.848s] [0m
+[0.897s] [31mCMake Error at /opt/ros/humble/share/ament_cmake_core/cmake/environment_hooks/ament_generate_package_environment.cmake:73 (configure_file):
+[0.898s]   Operation not permitted
+[0.900s] Call Stack (most recent call first):
+[0.902s]   /opt/ros/humble/share/ament_cmake_core/cmake/environment_hooks/ament_cmake_environment_hooks_package_hook.cmake:26 (ament_generate_package_environment)
+[0.905s]   /opt/ros/humble/share/ament_cmake_core/cmake/core/ament_execute_extensions.cmake:48 (include)
+[0.906s]   /opt/ros/humble/share/ament_cmake_core/cmake/core/ament_package.cmake:66 (ament_execute_extensions)
+[0.907s]   CMakeLists.txt:21 (ament_package)
+[0.909s] 
+[0.911s] [0m
+[1.031s] [31mCMake Error at /opt/ros/humble/share/ament_cmake_core/cmake/core/stamp.cmake:24 (configure_file):
+[1.032s]   Operation not permitted
+[1.034s] Call Stack (most recent call first):
+[1.036s]   /opt/ros/humble/share/ament_cmake_core/cmake/core/ament_package.cmake:135 (stamp)
+[1.037s]   /opt/ros/humble/share/ament_cmake_core/cmake/core/ament_package.cmake:68 (_ament_package)
+[1.039s]   CMakeLists.txt:21 (ament_package)
+[1.041s] 
+[1.042s] [0m
+[1.043s] -- Configuring incomplete, errors occurred!
+[1.045s] See also "/mnt/c/Users/user/gazebo_deth/build/asv_exhibition/CMakeFiles/CMakeOutput.log".
+[1.046s] See also "/mnt/c/Users/user/gazebo_deth/build/asv_exhibition/CMakeFiles/CMakeError.log".
+[1.076s] Invoked command in '/mnt/c/Users/user/gazebo_deth/build/asv_exhibition' returned '1': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake /mnt/c/Users/user/gazebo_deth/src/asv_exhibition -DCMAKE_INSTALL_PREFIX=/mnt/c/Users/user/gazebo_deth/install/asv_exhibition

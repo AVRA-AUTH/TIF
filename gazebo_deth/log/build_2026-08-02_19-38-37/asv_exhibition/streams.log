@@ -1,0 +1,84 @@
+[0.156s] Invoking command in '/mnt/c/Users/user/gazebo_deth/build/asv_exhibition': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake /mnt/c/Users/user/gazebo_deth/src/asv_exhibition -DCMAKE_INSTALL_PREFIX=/mnt/c/Users/user/gazebo_deth/install/asv_exhibition
+[0.259s] -- Found ament_cmake: 1.3.14 (/opt/ros/humble/share/ament_cmake/cmake)
+[0.317s] [31mCMake Error at /opt/ros/humble/share/ament_cmake_core/cmake/core/stamp.cmake:24 (configure_file):
+[0.318s]   Operation not permitted
+[0.318s] Call Stack (most recent call first):
+[0.320s]   /opt/ros/humble/share/ament_cmake_core/cmake/ament_cmake_package_templates-extras.cmake:24 (stamp)
+[0.321s]   /opt/ros/humble/share/ament_cmake_core/cmake/ament_cmake_coreConfig.cmake:41 (include)
+[0.322s]   /opt/ros/humble/share/ament_cmake/cmake/ament_cmake_export_dependencies-extras.cmake:15 (find_package)
+[0.323s]   /opt/ros/humble/share/ament_cmake/cmake/ament_cmakeConfig.cmake:41 (include)
+[0.324s]   CMakeLists.txt:9 (find_package)
+[0.325s] 
+[0.326s] [0m
+[0.408s] [31mCMake Error at /opt/ros/humble/share/ament_cmake_core/cmake/ament_cmake_uninstall_target-extras.cmake:28 (configure_file):
+[0.410s]   Operation not permitted
+[0.411s] Call Stack (most recent call first):
+[0.412s]   /opt/ros/humble/share/ament_cmake_core/cmake/ament_cmake_coreConfig.cmake:41 (include)
+[0.413s]   /opt/ros/humble/share/ament_cmake/cmake/ament_cmake_export_dependencies-extras.cmake:15 (find_package)
+[0.414s]   /opt/ros/humble/share/ament_cmake/cmake/ament_cmakeConfig.cmake:41 (include)
+[0.415s]   CMakeLists.txt:9 (find_package)
+[0.416s] 
+[0.417s] [0m
+[0.441s] [31mCMake Error at /opt/ros/humble/share/ament_cmake_test/cmake/ament_cmake_test-extras.cmake:34 (configure_file):
+[0.442s]   Operation not permitted
+[0.442s] Call Stack (most recent call first):
+[0.443s]   /opt/ros/humble/share/ament_cmake_test/cmake/ament_cmake_testConfig.cmake:41 (include)
+[0.444s]   /opt/ros/humble/share/ament_cmake/cmake/ament_cmake_export_dependencies-extras.cmake:21 (find_package)
+[0.445s]   /opt/ros/humble/share/ament_cmake/cmake/ament_cmakeConfig.cmake:41 (include)
+[0.446s]   CMakeLists.txt:9 (find_package)
+[0.446s] 
+[0.447s] [0m
+[0.448s] -- Found rclcpp: 16.0.19 (/opt/ros/humble/share/rclcpp/cmake)
+[0.625s] [33mCMake Warning at /opt/ros/humble/share/rcutils/cmake/ament_cmake_export_libraries-extras.cmake:116 (message):
+[0.626s]   Package 'rcutils' exports library 'dl' which couldn't be found
+[0.627s] Call Stack (most recent call first):
+[0.628s]   /opt/ros/humble/share/rcutils/cmake/rcutilsConfig.cmake:41 (include)
+[0.630s]   /opt/ros/humble/share/rosidl_runtime_c/cmake/ament_cmake_export_dependencies-extras.cmake:21 (find_package)
+[0.630s]   /opt/ros/humble/share/rosidl_runtime_c/cmake/rosidl_runtime_cConfig.cmake:41 (include)
+[0.632s]   /opt/ros/humble/share/builtin_interfaces/cmake/ament_cmake_export_dependencies-extras.cmake:21 (find_package)
+[0.633s]   /opt/ros/humble/share/builtin_interfaces/cmake/builtin_interfacesConfig.cmake:41 (include)
+[0.634s]   /opt/ros/humble/share/libstatistics_collector/cmake/ament_cmake_export_dependencies-extras.cmake:21 (find_package)
+[0.635s]   /opt/ros/humble/share/libstatistics_collector/cmake/libstatistics_collectorConfig.cmake:41 (include)
+[0.636s]   /opt/ros/humble/share/rclcpp/cmake/ament_cmake_export_dependencies-extras.cmake:21 (find_package)
+[0.637s]   /opt/ros/humble/share/rclcpp/cmake/rclcppConfig.cmake:41 (include)
+[0.638s]   CMakeLists.txt:10 (find_package)
+[0.639s] 
+[0.640s] [0m
+[0.641s] -- Found rosidl_generator_c: 3.1.9 (/opt/ros/humble/share/rosidl_generator_c/cmake)
+[0.643s] -- Found rosidl_adapter: 3.1.9 (/opt/ros/humble/share/rosidl_adapter/cmake)
+[0.644s] -- Found rosidl_generator_cpp: 3.1.9 (/opt/ros/humble/share/rosidl_generator_cpp/cmake)
+[0.646s] -- Using all available rosidl_typesupport_c: rosidl_typesupport_fastrtps_c;rosidl_typesupport_introspection_c
+[0.658s] -- Using all available rosidl_typesupport_cpp: rosidl_typesupport_fastrtps_cpp;rosidl_typesupport_introspection_cpp
+[0.681s] -- Found rmw_implementation_cmake: 6.1.2 (/opt/ros/humble/share/rmw_implementation_cmake/cmake)
+[0.687s] -- Found rmw_fastrtps_cpp: 6.2.10 (/opt/ros/humble/share/rmw_fastrtps_cpp/cmake)
+[8.067s] -- Using RMW implementation 'rmw_fastrtps_cpp' as default
+[9.787s] [31mCMake Error at /opt/ros/humble/share/rcl_logging_spdlog/cmake/ament_cmake_export_dependencies-extras.cmake:21 (find_package):
+[9.788s]   By not providing "Findspdlog.cmake" in CMAKE_MODULE_PATH this project has
+[9.789s]   asked CMake to find a package configuration file provided by "spdlog", but
+[9.790s]   CMake did not find one.
+[9.790s] 
+[9.791s]   Could not find a package configuration file provided by "spdlog" with any
+[9.792s]   of the following names:
+[9.793s] 
+[9.794s]     spdlogConfig.cmake
+[9.795s]     spdlog-config.cmake
+[9.795s] 
+[9.796s]   Add the installation prefix of "spdlog" to CMAKE_PREFIX_PATH or set
+[9.797s]   "spdlog_DIR" to a directory containing one of the above files.  If "spdlog"
+[9.798s]   provides a separate development package or SDK, be sure it has been
+[9.799s]   installed.
+[9.799s] Call Stack (most recent call first):
+[9.800s]   /opt/ros/humble/share/rcl_logging_spdlog/cmake/rcl_logging_spdlogConfig.cmake:41 (include)
+[9.801s]   /opt/ros/humble/share/rcl/cmake/ament_cmake_export_dependencies-extras.cmake:21 (find_package)
+[9.802s]   /opt/ros/humble/share/rcl/cmake/rclConfig.cmake:41 (include)
+[9.803s]   /opt/ros/humble/share/libstatistics_collector/cmake/ament_cmake_export_dependencies-extras.cmake:21 (find_package)
+[9.804s]   /opt/ros/humble/share/libstatistics_collector/cmake/libstatistics_collectorConfig.cmake:41 (include)
+[9.805s]   /opt/ros/humble/share/rclcpp/cmake/ament_cmake_export_dependencies-extras.cmake:21 (find_package)
+[9.806s]   /opt/ros/humble/share/rclcpp/cmake/rclcppConfig.cmake:41 (include)
+[9.807s]   CMakeLists.txt:10 (find_package)
+[9.808s] 
+[9.808s] [0m
+[9.809s] -- Configuring incomplete, errors occurred!
+[9.810s] See also "/mnt/c/Users/user/gazebo_deth/build/asv_exhibition/CMakeFiles/CMakeOutput.log".
+[9.811s] See also "/mnt/c/Users/user/gazebo_deth/build/asv_exhibition/CMakeFiles/CMakeError.log".
+[9.822s] Invoked command in '/mnt/c/Users/user/gazebo_deth/build/asv_exhibition' returned '1': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake /mnt/c/Users/user/gazebo_deth/src/asv_exhibition -DCMAKE_INSTALL_PREFIX=/mnt/c/Users/user/gazebo_deth/install/asv_exhibition

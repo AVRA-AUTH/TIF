@@ -1,0 +1,303 @@
+[0.000000] (-) TimerEvent: {}
+[0.000597] (asv_exhibition) JobQueued: {'identifier': 'asv_exhibition', 'dependencies': OrderedDict()}
+[0.000969] (asv_exhibition) JobStarted: {'identifier': 'asv_exhibition'}
+[0.035066] (asv_exhibition) JobProgress: {'identifier': 'asv_exhibition', 'progress': 'cmake'}
+[0.091073] (asv_exhibition) Command: {'cmd': ['/usr/bin/cmake', '/mnt/c/Users/user/gazebo_deth/src/asv_exhibition', '-DCMAKE_INSTALL_PREFIX=/mnt/c/Users/user/gazebo_deth/install/asv_exhibition'], 'cwd': '/mnt/c/Users/user/gazebo_deth/build/asv_exhibition', 'env': OrderedDict([('LESSOPEN', '| /usr/bin/lesspipe %s'), ('USER', 'mitsos_linux'), ('SHLVL', '1'), ('LD_LIBRARY_PATH', '/opt/ros/humble/opt/rviz_ogre_vendor/lib:/opt/ros/humble/lib/x86_64-linux-gnu:/opt/ros/humble/lib'), ('HOME', '/home/mitsos_linux'), ('OLDPWD', '/mnt/c/WINDOWS/system32'), ('ROS_PYTHON_VERSION', '3'), ('DBUS_SESSION_BUS_ADDRESS', 'unix:path=/run/user/1000/bus'), ('WSL_DISTRO_NAME', 'Ubuntu-22.04'), ('WAYLAND_DISPLAY', 'wayland-0'), ('ROS_DISTRO', 'humble'), ('LOGNAME', 'mitsos_linux'), ('NAME', 'MITSOS'), ('WSL_INTEROP', '/run/WSL/341_interop'), ('PULSE_SERVER', 'unix:/mnt/wslg/PulseServer'), ('_', '/usr/bin/colcon'), ('ROS_VERSION', '2'), ('TERM', 'xterm-256color'), ('ROS_LOCALHOST_ONLY', '0'), ('PATH', '/opt/ros/humble/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/usr/lib/wsl/lib:/mnt/c/WINDOWS/system32:/mnt/c/WINDOWS:/mnt/c/WINDOWS/System32/Wbem:/mnt/c/WINDOWS/System32/WindowsPowerShell/v1.0/:/mnt/c/WINDOWS/System32/OpenSSH/:/mnt/c/Program Files/MATLAB/R2026a/runtime/win64:/mnt/c/Program Files/MATLAB/R2026a/bin:/mnt/c/Program Files/MATLAB/R2024b/runtime/win64:/mnt/c/Program Files/MATLAB/R2024b/bin:/mnt/c/Program Files/NVIDIA Corporation/NVIDIA NvDLISR:/mnt/c/Program Files/TortoiseGit/bin:/mnt/c/Program Files/WireGuard/:/mnt/c/Program Files (x86)/GnuPG/bin:/mnt/c/Program Files/Docker/Docker/resources/bin:/mnt/c/Program Files/Git/cmd:/mnt/c/Program Files/nodejs/:/mnt/c/Users/user/AppData/Local/Programs/Python/Python311/Scripts/:/mnt/c/Users/user/AppData/Local/Programs/Python/Python311/:/mnt/c/Users/user/AppData/Local/Microsoft/WindowsApps:/mnt/c/Users/user/AppData/Local/Programs/Ollama:/mnt/c/Users/user/AppData/Roaming/npm:/mnt/c/Users/user/AppData/Local/Programs/Microsoft VS Code/bin:/mnt/c/Users/user/AppData/Local/Programs/Antigravity IDE/bin'), ('XDG_RUNTIME_DIR', '/run/user/1000/'), ('DISPLAY', ':0'), ('LANG', 'C.UTF-8'), ('LS_COLORS', 'rs=0:di=01;34:ln=01;36:mh=00:pi=40;33:so=01;35:do=01;35:bd=40;33;01:cd=40;33;01:or=40;31;01:mi=00:su=37;41:sg=30;43:ca=30;41:tw=30;42:ow=34;42:st=37;44:ex=01;32:*.tar=01;31:*.tgz=01;31:*.arc=01;31:*.arj=01;31:*.taz=01;31:*.lha=01;31:*.lz4=01;31:*.lzh=01;31:*.lzma=01;31:*.tlz=01;31:*.txz=01;31:*.tzo=01;31:*.t7z=01;31:*.zip=01;31:*.z=01;31:*.dz=01;31:*.gz=01;31:*.lrz=01;31:*.lz=01;31:*.lzo=01;31:*.xz=01;31:*.zst=01;31:*.tzst=01;31:*.bz2=01;31:*.bz=01;31:*.tbz=01;31:*.tbz2=01;31:*.tz=01;31:*.deb=01;31:*.rpm=01;31:*.jar=01;31:*.war=01;31:*.ear=01;31:*.sar=01;31:*.rar=01;31:*.alz=01;31:*.ace=01;31:*.zoo=01;31:*.cpio=01;31:*.7z=01;31:*.rz=01;31:*.cab=01;31:*.wim=01;31:*.swm=01;31:*.dwm=01;31:*.esd=01;31:*.jpg=01;35:*.jpeg=01;35:*.mjpg=01;35:*.mjpeg=01;35:*.gif=01;35:*.bmp=01;35:*.pbm=01;35:*.pgm=01;35:*.ppm=01;35:*.tga=01;35:*.xbm=01;35:*.xpm=01;35:*.tif=01;35:*.tiff=01;35:*.png=01;35:*.svg=01;35:*.svgz=01;35:*.mng=01;35:*.pcx=01;35:*.mov=01;35:*.mpg=01;35:*.mpeg=01;35:*.m2v=01;35:*.mkv=01;35:*.webm=01;35:*.webp=01;35:*.ogm=01;35:*.mp4=01;35:*.m4v=01;35:*.mp4v=01;35:*.vob=01;35:*.qt=01;35:*.nuv=01;35:*.wmv=01;35:*.asf=01;35:*.rm=01;35:*.rmvb=01;35:*.flc=01;35:*.avi=01;35:*.fli=01;35:*.flv=01;35:*.gl=01;35:*.dl=01;35:*.xcf=01;35:*.xwd=01;35:*.yuv=01;35:*.cgm=01;35:*.emf=01;35:*.ogv=01;35:*.ogx=01;35:*.aac=00;36:*.au=00;36:*.flac=00;36:*.m4a=00;36:*.mid=00;36:*.midi=00;36:*.mka=00;36:*.mp3=00;36:*.mpc=00;36:*.ogg=00;36:*.ra=00;36:*.wav=00;36:*.oga=00;36:*.opus=00;36:*.spx=00;36:*.xspf=00;36:'), ('AMENT_PREFIX_PATH', '/opt/ros/humble'), ('SHELL', '/bin/bash'), ('LESSCLOSE', '/usr/bin/lesspipe %s %s'), ('PWD', '/mnt/c/Users/user/gazebo_deth/build/asv_exhibition'), ('PYTHONPATH', '/opt/ros/humble/lib/python3.10/site-packages:/opt/ros/humble/local/lib/python3.10/dist-packages'), ('COLCON', '1'), ('WSL2_GUI_APPS_ENABLED', '1'), ('HOSTTYPE', 'x86_64'), ('WSLENV', ''), ('CMAKE_PREFIX_PATH', '/opt/ros/humble')]), 'shell': False}
+[0.110305] (-) TimerEvent: {}
+[0.210736] (-) TimerEvent: {}
+[0.250757] (asv_exhibition) StderrLine: {'line': b'\x1b[31mCMake Error at /usr/share/cmake-3.22/Modules/CMakeDetermineSystem.cmake:193 (configure_file):\n'}
+[0.252091] (asv_exhibition) StderrLine: {'line': b'  Operation not permitted\n'}
+[0.253178] (asv_exhibition) StderrLine: {'line': b'Call Stack (most recent call first):\n'}
+[0.254227] (asv_exhibition) StderrLine: {'line': b'  CMakeLists.txt:2 (project)\n'}
+[0.255262] (asv_exhibition) StderrLine: {'line': b'\n'}
+[0.256223] (asv_exhibition) StderrLine: {'line': b'\x1b[0m\n'}
+[0.310844] (-) TimerEvent: {}
+[0.411364] (-) TimerEvent: {}
+[0.511869] (-) TimerEvent: {}
+[0.612618] (-) TimerEvent: {}
+[0.632238] (asv_exhibition) StdoutLine: {'line': b'-- The C compiler identification is GNU 11.4.0\n'}
+[0.712728] (-) TimerEvent: {}
+[0.813229] (-) TimerEvent: {}
+[0.913762] (-) TimerEvent: {}
+[1.014284] (-) TimerEvent: {}
+[1.114812] (-) TimerEvent: {}
+[1.215332] (-) TimerEvent: {}
+[1.305722] (asv_exhibition) StderrLine: {'line': b'\x1b[31mCMake Error at /usr/share/cmake-3.22/Modules/CMakeDetermineCCompiler.cmake:226 (configure_file):\n'}
+[1.306904] (asv_exhibition) StderrLine: {'line': b'  Operation not permitted\n'}
+[1.307970] (asv_exhibition) StderrLine: {'line': b'Call Stack (most recent call first):\n'}
+[1.309405] (asv_exhibition) StderrLine: {'line': b'  CMakeLists.txt:2 (project)\n'}
+[1.310482] (asv_exhibition) StderrLine: {'line': b'\n'}
+[1.311542] (asv_exhibition) StderrLine: {'line': b'\x1b[0m\n'}
+[1.315443] (-) TimerEvent: {}
+[1.415966] (-) TimerEvent: {}
+[1.516555] (-) TimerEvent: {}
+[1.617092] (-) TimerEvent: {}
+[1.676128] (asv_exhibition) StdoutLine: {'line': b'-- The CXX compiler identification is GNU 11.4.0\n'}
+[1.717165] (-) TimerEvent: {}
+[1.817682] (-) TimerEvent: {}
+[1.918164] (-) TimerEvent: {}
+[2.018656] (-) TimerEvent: {}
+[2.119181] (-) TimerEvent: {}
+[2.219799] (-) TimerEvent: {}
+[2.320479] (-) TimerEvent: {}
+[2.342201] (asv_exhibition) StderrLine: {'line': b'\x1b[31mCMake Error at /usr/share/cmake-3.22/Modules/CMakeDetermineCXXCompiler.cmake:226 (configure_file):\n'}
+[2.343702] (asv_exhibition) StderrLine: {'line': b'  Operation not permitted\n'}
+[2.344784] (asv_exhibition) StderrLine: {'line': b'Call Stack (most recent call first):\n'}
+[2.345820] (asv_exhibition) StderrLine: {'line': b'  CMakeLists.txt:2 (project)\n'}
+[2.346993] (asv_exhibition) StderrLine: {'line': b'\n'}
+[2.348114] (asv_exhibition) StderrLine: {'line': b'\x1b[0m\n'}
+[2.374547] (asv_exhibition) StdoutLine: {'line': b'-- Detecting C compiler ABI info\n'}
+[2.420595] (-) TimerEvent: {}
+[2.521171] (-) TimerEvent: {}
+[2.621726] (-) TimerEvent: {}
+[2.722209] (-) TimerEvent: {}
+[2.822760] (-) TimerEvent: {}
+[2.923304] (-) TimerEvent: {}
+[3.023806] (-) TimerEvent: {}
+[3.124497] (-) TimerEvent: {}
+[3.225045] (-) TimerEvent: {}
+[3.290806] (asv_exhibition) StdoutLine: {'line': b'-- Detecting C compiler ABI info - failed\n'}
+[3.301818] (asv_exhibition) StdoutLine: {'line': b'-- Check for working C compiler: /usr/bin/cc\n'}
+[3.325159] (-) TimerEvent: {}
+[3.425666] (-) TimerEvent: {}
+[3.526302] (-) TimerEvent: {}
+[3.626853] (-) TimerEvent: {}
+[3.727365] (-) TimerEvent: {}
+[3.827877] (-) TimerEvent: {}
+[3.928415] (-) TimerEvent: {}
+[4.028948] (-) TimerEvent: {}
+[4.129573] (-) TimerEvent: {}
+[4.203373] (asv_exhibition) StdoutLine: {'line': b'-- Check for working C compiler: /usr/bin/cc - works\n'}
+[4.213391] (asv_exhibition) StdoutLine: {'line': b'-- Detecting C compile features\n'}
+[4.214676] (asv_exhibition) StdoutLine: {'line': b'-- Detecting C compile features - done\n'}
+[4.229684] (-) TimerEvent: {}
+[4.296185] (asv_exhibition) StderrLine: {'line': b'\x1b[31mCMake Error at /usr/share/cmake-3.22/Modules/CMakeTestCCompiler.cmake:85 (configure_file):\n'}
+[4.297406] (asv_exhibition) StderrLine: {'line': b'  Operation not permitted\n'}
+[4.298479] (asv_exhibition) StderrLine: {'line': b'Call Stack (most recent call first):\n'}
+[4.300227] (asv_exhibition) StderrLine: {'line': b'  CMakeLists.txt:2 (project)\n'}
+[4.301533] (asv_exhibition) StderrLine: {'line': b'\n'}
+[4.302613] (asv_exhibition) StderrLine: {'line': b'\x1b[0m\n'}
+[4.324122] (asv_exhibition) StdoutLine: {'line': b'-- Detecting CXX compiler ABI info\n'}
+[4.329784] (-) TimerEvent: {}
+[4.430307] (-) TimerEvent: {}
+[4.530869] (-) TimerEvent: {}
+[4.631430] (-) TimerEvent: {}
+[4.732429] (-) TimerEvent: {}
+[4.833076] (-) TimerEvent: {}
+[4.933630] (-) TimerEvent: {}
+[5.034151] (-) TimerEvent: {}
+[5.134617] (-) TimerEvent: {}
+[5.235146] (-) TimerEvent: {}
+[5.248232] (asv_exhibition) StdoutLine: {'line': b'-- Detecting CXX compiler ABI info - failed\n'}
+[5.260820] (asv_exhibition) StdoutLine: {'line': b'-- Check for working CXX compiler: /usr/bin/c++\n'}
+[5.335262] (-) TimerEvent: {}
+[5.435920] (-) TimerEvent: {}
+[5.536562] (-) TimerEvent: {}
+[5.637406] (-) TimerEvent: {}
+[5.737914] (-) TimerEvent: {}
+[5.838484] (-) TimerEvent: {}
+[5.939042] (-) TimerEvent: {}
+[6.039568] (-) TimerEvent: {}
+[6.140095] (-) TimerEvent: {}
+[6.174116] (asv_exhibition) StdoutLine: {'line': b'-- Check for working CXX compiler: /usr/bin/c++ - works\n'}
+[6.184072] (asv_exhibition) StdoutLine: {'line': b'-- Detecting CXX compile features\n'}
+[6.185357] (asv_exhibition) StdoutLine: {'line': b'-- Detecting CXX compile features - done\n'}
+[6.240204] (-) TimerEvent: {}
+[6.271331] (asv_exhibition) StderrLine: {'line': b'\x1b[31mCMake Error at /usr/share/cmake-3.22/Modules/CMakeTestCXXCompiler.cmake:78 (configure_file):\n'}
+[6.272498] (asv_exhibition) StderrLine: {'line': b'  Operation not permitted\n'}
+[6.273454] (asv_exhibition) StderrLine: {'line': b'Call Stack (most recent call first):\n'}
+[6.274515] (asv_exhibition) StderrLine: {'line': b'  CMakeLists.txt:2 (project)\n'}
+[6.275525] (asv_exhibition) StderrLine: {'line': b'\n'}
+[6.276685] (asv_exhibition) StderrLine: {'line': b'\x1b[0m\n'}
+[6.296721] (asv_exhibition) StdoutLine: {'line': b'-- Found ament_cmake: 1.3.14 (/opt/ros/humble/share/ament_cmake/cmake)\n'}
+[6.340278] (-) TimerEvent: {}
+[6.432497] (asv_exhibition) StdoutLine: {'line': b'-- Found Python3: /usr/bin/python3 (found version "3.10.12") found components: Interpreter \n'}
+[6.440390] (-) TimerEvent: {}
+[6.474132] (asv_exhibition) StderrLine: {'line': b'\x1b[31mCMake Error at /opt/ros/humble/share/ament_cmake_core/cmake/core/stamp.cmake:24 (configure_file):\n'}
+[6.475302] (asv_exhibition) StderrLine: {'line': b'  Operation not permitted\n'}
+[6.476344] (asv_exhibition) StderrLine: {'line': b'Call Stack (most recent call first):\n'}
+[6.477393] (asv_exhibition) StderrLine: {'line': b'  /opt/ros/humble/share/ament_cmake_core/cmake/ament_cmake_package_templates-extras.cmake:24 (stamp)\n'}
+[6.478398] (asv_exhibition) StderrLine: {'line': b'  /opt/ros/humble/share/ament_cmake_core/cmake/ament_cmake_coreConfig.cmake:41 (include)\n'}
+[6.479355] (asv_exhibition) StderrLine: {'line': b'  /opt/ros/humble/share/ament_cmake/cmake/ament_cmake_export_dependencies-extras.cmake:15 (find_package)\n'}
+[6.480240] (asv_exhibition) StderrLine: {'line': b'  /opt/ros/humble/share/ament_cmake/cmake/ament_cmakeConfig.cmake:41 (include)\n'}
+[6.481451] (asv_exhibition) StderrLine: {'line': b'  CMakeLists.txt:9 (find_package)\n'}
+[6.482627] (asv_exhibition) StderrLine: {'line': b'\n'}
+[6.483691] (asv_exhibition) StderrLine: {'line': b'\x1b[0m\n'}
+[6.540500] (-) TimerEvent: {}
+[6.603777] (asv_exhibition) StderrLine: {'line': b'\x1b[31mCMake Error at /opt/ros/humble/share/ament_cmake_core/cmake/ament_cmake_uninstall_target-extras.cmake:28 (configure_file):\n'}
+[6.605114] (asv_exhibition) StderrLine: {'line': b'  Operation not permitted\n'}
+[6.606591] (asv_exhibition) StderrLine: {'line': b'Call Stack (most recent call first):\n'}
+[6.607599] (asv_exhibition) StderrLine: {'line': b'  /opt/ros/humble/share/ament_cmake_core/cmake/ament_cmake_coreConfig.cmake:41 (include)\n'}
+[6.608729] (asv_exhibition) StderrLine: {'line': b'  /opt/ros/humble/share/ament_cmake/cmake/ament_cmake_export_dependencies-extras.cmake:15 (find_package)\n'}
+[6.609717] (asv_exhibition) StderrLine: {'line': b'  /opt/ros/humble/share/ament_cmake/cmake/ament_cmakeConfig.cmake:41 (include)\n'}
+[6.610677] (asv_exhibition) StderrLine: {'line': b'  CMakeLists.txt:9 (find_package)\n'}
+[6.611698] (asv_exhibition) StderrLine: {'line': b'\n'}
+[6.612775] (asv_exhibition) StderrLine: {'line': b'\x1b[0m\n'}
+[6.640629] (-) TimerEvent: {}
+[6.680809] (asv_exhibition) StderrLine: {'line': b'\x1b[31mCMake Error at /opt/ros/humble/share/ament_cmake_test/cmake/ament_cmake_test-extras.cmake:34 (configure_file):\n'}
+[6.681926] (asv_exhibition) StderrLine: {'line': b'  Operation not permitted\n'}
+[6.682953] (asv_exhibition) StderrLine: {'line': b'Call Stack (most recent call first):\n'}
+[6.683932] (asv_exhibition) StderrLine: {'line': b'  /opt/ros/humble/share/ament_cmake_test/cmake/ament_cmake_testConfig.cmake:41 (include)\n'}
+[6.684956] (asv_exhibition) StderrLine: {'line': b'  /opt/ros/humble/share/ament_cmake/cmake/ament_cmake_export_dependencies-extras.cmake:21 (find_package)\n'}
+[6.686028] (asv_exhibition) StderrLine: {'line': b'  /opt/ros/humble/share/ament_cmake/cmake/ament_cmakeConfig.cmake:41 (include)\n'}
+[6.687223] (asv_exhibition) StderrLine: {'line': b'  CMakeLists.txt:9 (find_package)\n'}
+[6.688284] (asv_exhibition) StderrLine: {'line': b'\n'}
+[6.689235] (asv_exhibition) StderrLine: {'line': b'\x1b[0m\n'}
+[6.690317] (asv_exhibition) StdoutLine: {'line': b'-- Found rclcpp: 16.0.19 (/opt/ros/humble/share/rclcpp/cmake)\n'}
+[6.740695] (-) TimerEvent: {}
+[6.841235] (-) TimerEvent: {}
+[6.873645] (asv_exhibition) StderrLine: {'line': b'\x1b[33mCMake Warning at /opt/ros/humble/share/rcutils/cmake/ament_cmake_export_libraries-extras.cmake:116 (message):\n'}
+[6.874652] (asv_exhibition) StderrLine: {'line': b"  Package 'rcutils' exports library 'dl' which couldn't be found\n"}
+[6.875838] (asv_exhibition) StderrLine: {'line': b'Call Stack (most recent call first):\n'}
+[6.877276] (asv_exhibition) StderrLine: {'line': b'  /opt/ros/humble/share/rcutils/cmake/rcutilsConfig.cmake:41 (include)\n'}
+[6.878213] (asv_exhibition) StderrLine: {'line': b'  /opt/ros/humble/share/rosidl_runtime_c/cmake/ament_cmake_export_dependencies-extras.cmake:21 (find_package)\n'}
+[6.879274] (asv_exhibition) StderrLine: {'line': b'  /opt/ros/humble/share/rosidl_runtime_c/cmake/rosidl_runtime_cConfig.cmake:41 (include)\n'}
+[6.880190] (asv_exhibition) StderrLine: {'line': b'  /opt/ros/humble/share/builtin_interfaces/cmake/ament_cmake_export_dependencies-extras.cmake:21 (find_package)\n'}
+[6.881437] (asv_exhibition) StderrLine: {'line': b'  /opt/ros/humble/share/builtin_interfaces/cmake/builtin_interfacesConfig.cmake:41 (include)\n'}
+[6.882663] (asv_exhibition) StderrLine: {'line': b'  /opt/ros/humble/share/libstatistics_collector/cmake/ament_cmake_export_dependencies-extras.cmake:21 (find_package)\n'}
+[6.883637] (asv_exhibition) StderrLine: {'line': b'  /opt/ros/humble/share/libstatistics_collector/cmake/libstatistics_collectorConfig.cmake:41 (include)\n'}
+[6.884515] (asv_exhibition) StderrLine: {'line': b'  /opt/ros/humble/share/rclcpp/cmake/ament_cmake_export_dependencies-extras.cmake:21 (find_package)\n'}
+[6.885461] (asv_exhibition) StderrLine: {'line': b'  /opt/ros/humble/share/rclcpp/cmake/rclcppConfig.cmake:41 (include)\n'}
+[6.886372] (asv_exhibition) StderrLine: {'line': b'  CMakeLists.txt:11 (find_package)\n'}
+[6.887218] (asv_exhibition) StderrLine: {'line': b'\n'}
+[6.888166] (asv_exhibition) StderrLine: {'line': b'\x1b[0m\n'}
+[6.893354] (asv_exhibition) StdoutLine: {'line': b'-- Found rosidl_generator_c: 3.1.9 (/opt/ros/humble/share/rosidl_generator_c/cmake)\n'}
+[6.899197] (asv_exhibition) StdoutLine: {'line': b'-- Found rosidl_adapter: 3.1.9 (/opt/ros/humble/share/rosidl_adapter/cmake)\n'}
+[6.909809] (asv_exhibition) StdoutLine: {'line': b'-- Found rosidl_generator_cpp: 3.1.9 (/opt/ros/humble/share/rosidl_generator_cpp/cmake)\n'}
+[6.928164] (asv_exhibition) StdoutLine: {'line': b'-- Using all available rosidl_typesupport_c: rosidl_typesupport_fastrtps_c;rosidl_typesupport_introspection_c\n'}
+[6.941340] (-) TimerEvent: {}
+[6.948651] (asv_exhibition) StdoutLine: {'line': b'-- Using all available rosidl_typesupport_cpp: rosidl_typesupport_fastrtps_cpp;rosidl_typesupport_introspection_cpp\n'}
+[7.001610] (asv_exhibition) StdoutLine: {'line': b'-- Found rmw_implementation_cmake: 6.1.2 (/opt/ros/humble/share/rmw_implementation_cmake/cmake)\n'}
+[7.006927] (asv_exhibition) StdoutLine: {'line': b'-- Found rmw_fastrtps_cpp: 6.2.10 (/opt/ros/humble/share/rmw_fastrtps_cpp/cmake)\n'}
+[7.041442] (-) TimerEvent: {}
+[7.142261] (-) TimerEvent: {}
+[7.242906] (-) TimerEvent: {}
+[7.343451] (-) TimerEvent: {}
+[7.443962] (-) TimerEvent: {}
+[7.544465] (-) TimerEvent: {}
+[7.645032] (-) TimerEvent: {}
+[7.745571] (-) TimerEvent: {}
+[7.846405] (-) TimerEvent: {}
+[7.946899] (-) TimerEvent: {}
+[8.047358] (-) TimerEvent: {}
+[8.147884] (-) TimerEvent: {}
+[8.248424] (-) TimerEvent: {}
+[8.348932] (-) TimerEvent: {}
+[8.449518] (-) TimerEvent: {}
+[8.550229] (-) TimerEvent: {}
+[8.650957] (-) TimerEvent: {}
+[8.751553] (-) TimerEvent: {}
+[8.852225] (-) TimerEvent: {}
+[8.886233] (asv_exhibition) StdoutLine: {'line': b'-- Found OpenSSL: /usr/lib/x86_64-linux-gnu/libcrypto.so (found version "3.0.2")  \n'}
+[8.952342] (-) TimerEvent: {}
+[9.052848] (-) TimerEvent: {}
+[9.153518] (-) TimerEvent: {}
+[9.254077] (-) TimerEvent: {}
+[9.354601] (-) TimerEvent: {}
+[9.455165] (-) TimerEvent: {}
+[9.555851] (-) TimerEvent: {}
+[9.656436] (-) TimerEvent: {}
+[9.757128] (-) TimerEvent: {}
+[9.857676] (-) TimerEvent: {}
+[9.958244] (-) TimerEvent: {}
+[10.059050] (-) TimerEvent: {}
+[10.159581] (-) TimerEvent: {}
+[10.260072] (-) TimerEvent: {}
+[10.360632] (-) TimerEvent: {}
+[10.461305] (-) TimerEvent: {}
+[10.561838] (-) TimerEvent: {}
+[10.662376] (-) TimerEvent: {}
+[10.763004] (-) TimerEvent: {}
+[10.863504] (-) TimerEvent: {}
+[10.937845] (asv_exhibition) StdoutLine: {'line': b'-- Found FastRTPS: /opt/ros/humble/include  \n'}
+[10.963619] (-) TimerEvent: {}
+[11.064303] (-) TimerEvent: {}
+[11.164938] (-) TimerEvent: {}
+[11.265454] (-) TimerEvent: {}
+[11.365933] (-) TimerEvent: {}
+[11.466428] (-) TimerEvent: {}
+[11.566976] (-) TimerEvent: {}
+[11.667500] (-) TimerEvent: {}
+[11.767978] (-) TimerEvent: {}
+[11.868499] (-) TimerEvent: {}
+[11.969187] (-) TimerEvent: {}
+[12.069725] (-) TimerEvent: {}
+[12.170257] (-) TimerEvent: {}
+[12.270819] (-) TimerEvent: {}
+[12.371348] (-) TimerEvent: {}
+[12.471888] (-) TimerEvent: {}
+[12.572581] (-) TimerEvent: {}
+[12.673095] (-) TimerEvent: {}
+[12.773690] (-) TimerEvent: {}
+[12.874266] (-) TimerEvent: {}
+[12.974869] (-) TimerEvent: {}
+[13.075387] (-) TimerEvent: {}
+[13.175920] (-) TimerEvent: {}
+[13.276411] (-) TimerEvent: {}
+[13.376913] (-) TimerEvent: {}
+[13.477443] (-) TimerEvent: {}
+[13.578051] (-) TimerEvent: {}
+[13.678595] (-) TimerEvent: {}
+[13.779139] (-) TimerEvent: {}
+[13.879774] (-) TimerEvent: {}
+[13.980303] (-) TimerEvent: {}
+[14.080828] (-) TimerEvent: {}
+[14.181393] (-) TimerEvent: {}
+[14.281862] (-) TimerEvent: {}
+[14.382349] (-) TimerEvent: {}
+[14.482861] (-) TimerEvent: {}
+[14.583372] (-) TimerEvent: {}
+[14.678774] (asv_exhibition) StdoutLine: {'line': b"-- Using RMW implementation 'rmw_fastrtps_cpp' as default\n"}
+[14.683513] (-) TimerEvent: {}
+[14.784084] (-) TimerEvent: {}
+[14.884559] (-) TimerEvent: {}
+[14.985061] (-) TimerEvent: {}
+[15.085565] (-) TimerEvent: {}
+[15.186055] (-) TimerEvent: {}
+[15.286601] (-) TimerEvent: {}
+[15.387125] (-) TimerEvent: {}
+[15.487642] (-) TimerEvent: {}
+[15.588148] (-) TimerEvent: {}
+[15.688744] (-) TimerEvent: {}
+[15.789315] (-) TimerEvent: {}
+[15.889896] (-) TimerEvent: {}
+[15.990505] (-) TimerEvent: {}
+[16.091171] (-) TimerEvent: {}
+[16.191696] (-) TimerEvent: {}
+[16.292342] (-) TimerEvent: {}
+[16.386718] (asv_exhibition) StderrLine: {'line': b'\x1b[31mCMake Error at /opt/ros/humble/share/rcl_logging_spdlog/cmake/ament_cmake_export_dependencies-extras.cmake:21 (find_package):\n'}
+[16.387831] (asv_exhibition) StderrLine: {'line': b'  By not providing "Findspdlog.cmake" in CMAKE_MODULE_PATH this project has\n'}
+[16.388717] (asv_exhibition) StderrLine: {'line': b'  asked CMake to find a package configuration file provided by "spdlog", but\n'}
+[16.389651] (asv_exhibition) StderrLine: {'line': b'  CMake did not find one.\n'}
+[16.390441] (asv_exhibition) StderrLine: {'line': b'\n'}
+[16.391520] (asv_exhibition) StderrLine: {'line': b'  Could not find a package configuration file provided by "spdlog" with any\n'}
+[16.392377] (-) TimerEvent: {}
+[16.392679] (asv_exhibition) StderrLine: {'line': b'  of the following names:\n'}
+[16.393733] (asv_exhibition) StderrLine: {'line': b'\n'}
+[16.394861] (asv_exhibition) StderrLine: {'line': b'    spdlogConfig.cmake\n'}
+[16.395775] (asv_exhibition) StderrLine: {'line': b'    spdlog-config.cmake\n'}
+[16.396654] (asv_exhibition) StderrLine: {'line': b'\n'}
+[16.397707] (asv_exhibition) StderrLine: {'line': b'  Add the installation prefix of "spdlog" to CMAKE_PREFIX_PATH or set\n'}
+[16.398530] (asv_exhibition) StderrLine: {'line': b'  "spdlog_DIR" to a directory containing one of the above files.  If "spdlog"\n'}
+[16.399392] (asv_exhibition) StderrLine: {'line': b'  provides a separate development package or SDK, be sure it has been\n'}
+[16.400218] (asv_exhibition) StderrLine: {'line': b'  installed.\n'}
+[16.400973] (asv_exhibition) StderrLine: {'line': b'Call Stack (most recent call first):\n'}
+[16.401627] (asv_exhibition) StderrLine: {'line': b'  /opt/ros/humble/share/rcl_logging_spdlog/cmake/rcl_logging_spdlogConfig.cmake:41 (include)\n'}
+[16.402441] (asv_exhibition) StderrLine: {'line': b'  /opt/ros/humble/share/rcl/cmake/ament_cmake_export_dependencies-extras.cmake:21 (find_package)\n'}
+[16.403230] (asv_exhibition) StderrLine: {'line': b'  /opt/ros/humble/share/rcl/cmake/rclConfig.cmake:41 (include)\n'}
+[16.404091] (asv_exhibition) StderrLine: {'line': b'  /opt/ros/humble/share/libstatistics_collector/cmake/ament_cmake_export_dependencies-extras.cmake:21 (find_package)\n'}
+[16.404889] (asv_exhibition) StderrLine: {'line': b'  /opt/ros/humble/share/libstatistics_collector/cmake/libstatistics_collectorConfig.cmake:41 (include)\n'}
+[16.405857] (asv_exhibition) StderrLine: {'line': b'  /opt/ros/humble/share/rclcpp/cmake/ament_cmake_export_dependencies-extras.cmake:21 (find_package)\n'}
+[16.406875] (asv_exhibition) StderrLine: {'line': b'  /opt/ros/humble/share/rclcpp/cmake/rclcppConfig.cmake:41 (include)\n'}
+[16.408102] (asv_exhibition) StderrLine: {'line': b'  CMakeLists.txt:11 (find_package)\n'}
+[16.409090] (asv_exhibition) StderrLine: {'line': b'\n'}
+[16.410143] (asv_exhibition) StderrLine: {'line': b'\x1b[0m\n'}
+[16.411305] (asv_exhibition) StdoutLine: {'line': b'-- Configuring incomplete, errors occurred!\n'}
+[16.412446] (asv_exhibition) StdoutLine: {'line': b'See also "/mnt/c/Users/user/gazebo_deth/build/asv_exhibition/CMakeFiles/CMakeOutput.log".\n'}
+[16.414029] (asv_exhibition) StdoutLine: {'line': b'See also "/mnt/c/Users/user/gazebo_deth/build/asv_exhibition/CMakeFiles/CMakeError.log".\n'}
+[16.423775] (asv_exhibition) CommandEnded: {'returncode': 1}
+[16.492482] (-) TimerEvent: {}
+[16.593210] (-) TimerEvent: {}
+[16.662002] (asv_exhibition) JobEnded: {'identifier': 'asv_exhibition', 'rc': 1}
+[16.706384] (-) TimerEvent: {}
+[16.706738] (-) EventReactorShutdown: {}

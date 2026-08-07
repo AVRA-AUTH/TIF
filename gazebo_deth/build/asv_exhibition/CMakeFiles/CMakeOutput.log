@@ -1,0 +1,55 @@
+The system is: Linux - 6.6.87.1-microsoft-standard-WSL2 - x86_64
+Compiling the C compiler identification source file "CMakeCCompilerId.c" succeeded.
+Compiler: /usr/bin/cc 
+Build flags: 
+Id flags:  
+
+The output was:
+0
+
+
+Compilation of the C compiler identification source "CMakeCCompilerId.c" produced "a.out"
+
+The C compiler identification is GNU, found in "/mnt/c/Users/user/gazebo_deth/build/asv_exhibition/CMakeFiles/3.22.1/CompilerIdC/a.out"
+
+Compiling the CXX compiler identification source file "CMakeCXXCompilerId.cpp" succeeded.
+Compiler: /usr/bin/c++ 
+Build flags: 
+Id flags:  
+
+The output was:
+0
+
+
+Compilation of the CXX compiler identification source "CMakeCXXCompilerId.cpp" produced "a.out"
+
+The CXX compiler identification is GNU, found in "/mnt/c/Users/user/gazebo_deth/build/asv_exhibition/CMakeFiles/3.22.1/CompilerIdCXX/a.out"
+
+Determining if the C compiler works passed with the following output:
+Change Dir: /mnt/c/Users/user/gazebo_deth/build/asv_exhibition/CMakeFiles/CMakeTmp
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_5f0f9/fast && /usr/bin/gmake  -f CMakeFiles/cmTC_5f0f9.dir/build.make CMakeFiles/cmTC_5f0f9.dir/build
+gmake[1]: Entering directory '/mnt/c/Users/user/gazebo_deth/build/asv_exhibition/CMakeFiles/CMakeTmp'
+Building C object CMakeFiles/cmTC_5f0f9.dir/testCCompiler.c.o
+/usr/bin/cc    -o CMakeFiles/cmTC_5f0f9.dir/testCCompiler.c.o -c /mnt/c/Users/user/gazebo_deth/build/asv_exhibition/CMakeFiles/CMakeTmp/testCCompiler.c
+Linking C executable cmTC_5f0f9
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_5f0f9.dir/link.txt --verbose=1
+/usr/bin/cc CMakeFiles/cmTC_5f0f9.dir/testCCompiler.c.o -o cmTC_5f0f9 
+gmake[1]: Leaving directory '/mnt/c/Users/user/gazebo_deth/build/asv_exhibition/CMakeFiles/CMakeTmp'
+
+
+
+Determining if the CXX compiler works passed with the following output:
+Change Dir: /mnt/c/Users/user/gazebo_deth/build/asv_exhibition/CMakeFiles/CMakeTmp
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_79988/fast && /usr/bin/gmake  -f CMakeFiles/cmTC_79988.dir/build.make CMakeFiles/cmTC_79988.dir/build
+gmake[1]: Entering directory '/mnt/c/Users/user/gazebo_deth/build/asv_exhibition/CMakeFiles/CMakeTmp'
+Building CXX object CMakeFiles/cmTC_79988.dir/testCXXCompiler.cxx.o
+/usr/bin/c++    -o CMakeFiles/cmTC_79988.dir/testCXXCompiler.cxx.o -c /mnt/c/Users/user/gazebo_deth/build/asv_exhibition/CMakeFiles/CMakeTmp/testCXXCompiler.cxx
+Linking CXX executable cmTC_79988
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_79988.dir/link.txt --verbose=1
+/usr/bin/c++ CMakeFiles/cmTC_79988.dir/testCXXCompiler.cxx.o -o cmTC_79988 
+gmake[1]: Leaving directory '/mnt/c/Users/user/gazebo_deth/build/asv_exhibition/CMakeFiles/CMakeTmp'
+
+
+
