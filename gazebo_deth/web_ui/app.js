@@ -2028,6 +2028,23 @@ function thrusterLoop() {
             lastPublishedLinear = currentLinear;
             lastPublishedAngular = currentAngular;
         }
+
+        // Telemetry panel: this is the only place driving it in Mode 2 (the
+        // status-machine block further down only runs during Mode 1/3
+        // auto-nav), so without this it just sits frozen on stale values.
+        const teleStatusEl = document.getElementById('tele-status');
+        if (teleStatusEl) {
+            if (stillish) {
+                teleStatusEl.textContent = '⚓ Idle (Manual Mode)';
+                teleStatusEl.style.color = '#ffc107';
+            } else {
+                teleStatusEl.textContent = '🕹️ Manual Drive';
+                teleStatusEl.style.color = '#00ffcc';
+            }
+        }
+        document.getElementById('tele-x').textContent = boatPos.x.toFixed(2);
+        document.getElementById('tele-y').textContent = boatPos.y.toFixed(2);
+        document.getElementById('tele-speed').textContent = Math.abs(currentLinear).toFixed(2);
     }
 
     requestAnimationFrame(thrusterLoop);
