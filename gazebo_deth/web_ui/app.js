@@ -1,3 +1,10 @@
+// ================= MODE 2 (JOYSTICK DRIVE) TUNABLES ================= //
+const MAX_LINEAR_FWD = 6.0;      // top forward speed (m/s)
+const MAX_LINEAR_REV = -1.5;     // top reverse speed (m/s)
+const MAX_ANGULAR = 1.2;         // top turn rate (rad/s)
+const THRUST_RAMP_RATE = 6.0;    // units/sec: how fast velocity reaches its target while a thruster is held open
+const WATER_FRICTION_RATE = 1.0; // units/sec: how fast velocity decays toward zero once released
+
 // Connect to ROS via roslibjs
 const ros = new ROSLIB.Ros({
     url: 'ws://localhost:9090'
@@ -1812,6 +1819,7 @@ const mode3Tools = document.getElementById('mode3-tools');
 
 if (mode1Btn) {
     mode1Btn.addEventListener('click', () => {
+        if (activeAppMode === 2) stopThrusters();
         activeAppMode = 1;
         mode1Btn.classList.add('active');
         if (mode2Btn) mode2Btn.classList.remove('active');
@@ -1836,6 +1844,7 @@ if (mode2Btn) {
 
 if (mode3Btn) {
     mode3Btn.addEventListener('click', () => {
+        if (activeAppMode === 2) stopThrusters();
         activeAppMode = 3;
         mode3Btn.classList.add('active');
         if (mode1Btn) mode1Btn.classList.remove('active');
@@ -1915,7 +1924,10 @@ if (resetDockBtn) {
     });
 }
 
-// Mode 2 Controls
+// Mode 2 Controls: continuous thruster + water-friction velocity model.
+// A held control ramps quickly toward its fixed end velocity (thrusters
+// "open"); releasing it lets velocity decay gradually toward zero at the
+// water-friction rate instead of snapping to zero immediately.
 function sendCmdVel(linear, angular) {
     const twist = new ROSLIB.Message({
         linear: { x: linear, y: 0.0, z: 0.0 },
@@ -1924,58 +1936,100 @@ function sendCmdVel(linear, angular) {
     cmdVelTopic.publish(twist);
 }
 
-const btnUp = document.getElementById('btn-up');
-if (btnUp) {
-    btnUp.addEventListener('click', () => {
-        boatPos.x += Math.cos(boatPos.yaw) * 0.8;
-        boatPos.y += Math.sin(boatPos.yaw) * 0.8;
-        sendCmdVel(2.0, 0.0);
-    });
+let currentLinear = 0.0;
+let currentAngular = 0.0;
+const heldAxes = new Set(); // 'fwd' | 'rev' | 'left' | 'right'
+
+function keyToAxis(key) {
+    switch (key) {
+        case 'w': case 'arrowup': return 'fwd';
+        case 's': case 'arrowdown': return 'rev';
+        case 'a': case 'arrowleft': return 'left';
+        case 'd': case 'arrowright': return 'right';
+        default: return null;
+    }
 }
-const btnDown = document.getElementById('btn-down');
-if (btnDown) {
-    btnDown.addEventListener('click', () => {
-        boatPos.x -= Math.cos(boatPos.yaw) * 0.8;
-        boatPos.y -= Math.sin(boatPos.yaw) * 0.8;
-        sendCmdVel(-1.5, 0.0);
-    });
+
+function approachVelocity(current, target, dt) {
+    const rate = target !== 0 ? THRUST_RAMP_RATE : WATER_FRICTION_RATE;
+    const maxStep = rate * dt;
+    const diff = target - current;
+    if (Math.abs(diff) <= maxStep) return target;
+    return current + Math.sign(diff) * maxStep;
 }
-const btnLeft = document.getElementById('btn-left');
-if (btnLeft) {
-    btnLeft.addEventListener('click', () => {
-        boatPos.yaw += 0.2;
-        sendCmdVel(1.0, 1.2);
-    });
+
+function stopThrusters() {
+    heldAxes.clear();
+    currentLinear = 0.0;
+    currentAngular = 0.0;
+    sendCmdVel(0.0, 0.0);
 }
-const btnRight = document.getElementById('btn-right');
-if (btnRight) {
-    btnRight.addEventListener('click', () => {
-        boatPos.yaw -= 0.2;
-        sendCmdVel(1.0, -1.2);
-    });
+
+// On-screen D-pad: press-and-hold, matching keyboard behavior
+function bindThruster(el, axis) {
+    if (!el) return;
+    el.addEventListener('mousedown', () => heldAxes.add(axis));
+    el.addEventListener('touchstart', (e) => { e.preventDefault(); heldAxes.add(axis); });
+    ['mouseup', 'mouseleave', 'touchend', 'touchcancel'].forEach(evt =>
+        el.addEventListener(evt, () => heldAxes.delete(axis))
+    );
 }
+bindThruster(document.getElementById('btn-up'), 'fwd');
+bindThruster(document.getElementById('btn-down'), 'rev');
+bindThruster(document.getElementById('btn-left'), 'left');
+bindThruster(document.getElementById('btn-right'), 'right');
+
 const btnStop = document.getElementById('btn-stop');
 if (btnStop) {
-    btnStop.addEventListener('click', () => sendCmdVel(0.0, 0.0));
+    btnStop.addEventListener('click', stopThrusters);
 }
 
 window.addEventListener('keydown', (e) => {
     if (activeAppMode !== 2) return;
-    switch (e.key.toLowerCase()) {
-        case 'w': case 'arrowup':
-            boatPos.x += Math.cos(boatPos.yaw) * 0.5;
-            boatPos.y += Math.sin(boatPos.yaw) * 0.5;
-            sendCmdVel(2.0, 0.0); break;
-        case 's': case 'arrowdown':
-            boatPos.x -= Math.cos(boatPos.yaw) * 0.5;
-            boatPos.y -= Math.sin(boatPos.yaw) * 0.5;
-            sendCmdVel(-1.5, 0.0); break;
-        case 'a': case 'arrowleft':
-            boatPos.yaw += 0.15;
-            sendCmdVel(1.0, 1.2); break;
-        case 'd': case 'arrowright':
-            boatPos.yaw -= 0.15;
-            sendCmdVel(1.0, -1.2); break;
-        case ' ': sendCmdVel(0.0, 0.0); break;
-    }
+    if (e.key === ' ') { stopThrusters(); return; }
+    const axis = keyToAxis(e.key.toLowerCase());
+    if (axis) heldAxes.add(axis);
 });
+
+window.addEventListener('keyup', (e) => {
+    if (activeAppMode !== 2) return;
+    const axis = keyToAxis(e.key.toLowerCase());
+    if (axis) heldAxes.delete(axis);
+});
+
+let lastThrusterTime = performance.now();
+let lastPublishedLinear = 0.0;
+let lastPublishedAngular = 0.0;
+
+function thrusterLoop() {
+    const now = performance.now();
+    const dt = Math.min((now - lastThrusterTime) / 1000, 0.1); // clamp so a stalled tab doesn't jump velocity
+    lastThrusterTime = now;
+
+    if (activeAppMode === 2) {
+        const targetLinear = heldAxes.has('fwd') ? MAX_LINEAR_FWD : heldAxes.has('rev') ? MAX_LINEAR_REV : 0.0;
+        const targetAngular = heldAxes.has('left') ? MAX_ANGULAR : heldAxes.has('right') ? -MAX_ANGULAR : 0.0;
+
+        currentLinear = approachVelocity(currentLinear, targetLinear, dt);
+        currentAngular = approachVelocity(currentAngular, targetAngular, dt);
+
+        if (currentLinear !== 0.0 || currentAngular !== 0.0) {
+            boatPos.x += Math.cos(boatPos.yaw) * currentLinear * dt;
+            boatPos.y += Math.sin(boatPos.yaw) * currentLinear * dt;
+            boatPos.yaw += currentAngular * dt;
+        }
+
+        // Publish while moving/decaying; once settled at zero, send one
+        // final stop and go quiet rather than flooding the bridge forever.
+        const stillish = currentLinear === 0.0 && currentAngular === 0.0;
+        const wasPublishingMotion = lastPublishedLinear !== 0.0 || lastPublishedAngular !== 0.0;
+        if (!stillish || wasPublishingMotion) {
+            sendCmdVel(currentLinear, currentAngular);
+            lastPublishedLinear = currentLinear;
+            lastPublishedAngular = currentAngular;
+        }
+    }
+
+    requestAnimationFrame(thrusterLoop);
+}
+requestAnimationFrame(thrusterLoop);
