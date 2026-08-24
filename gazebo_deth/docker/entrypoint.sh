@@ -15,4 +15,8 @@ done
 source /opt/ros/humble/setup.bash
 source /workspace/install/setup.bash
 
+# So `model://WAM-V-Base/...` etc. in exhibition_water.sdf resolve to the
+# meshes installed alongside the world file.
+export GZ_SIM_RESOURCE_PATH="/workspace/install/asv_exhibition/share/asv_exhibition/models:${GZ_SIM_RESOURCE_PATH}"
+
 exec ros2 launch asv_exhibition exhibition.launch.py "$@"

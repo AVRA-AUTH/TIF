@@ -565,46 +565,68 @@ bldgPositions.forEach(b => {
 
 scene.add(marinaGroup);
 
-// 4. High-Detail ASV Vessel Model (Main Boat)
+// 4. High-Detail ASV Vessel Model (Main Boat) — twin-hull catamaran styled
+// after the real WAM-V: black cylindrical pontoons with an orange deck/trim
+// (colors taken from the actual WAM-V texture), linked by an open frame
+// rather than a solid slab, matching its real look instead of a plain box hull.
 const boatGroup = new THREE.Group();
+const HULL_Z_OFFSET = 0.55; // distance from centerline to each hull's centerline
+const HULL_RADIUS = 0.28;
 
-// Sleek V-Hull Base
-const hullGeo = new THREE.BoxGeometry(3.6, 0.7, 1.6);
-const hullMat = new THREE.MeshStandardMaterial({ color: 0xf8f9fa, roughness: 0.1, metalness: 0.2 });
-const hullMesh = new THREE.Mesh(hullGeo, hullMat);
-hullMesh.position.set(0, 0.2, 0);
-hullMesh.castShadow = true;
-boatGroup.add(hullMesh);
+const hullGeo = new THREE.CylinderGeometry(HULL_RADIUS, HULL_RADIUS, 3.0, 16);
+const hullMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.4, metalness: 0.3 });
+const bowGeo = new THREE.ConeGeometry(HULL_RADIUS, 1.0, 16);
+const accentMat = new THREE.MeshStandardMaterial({ color: 0xff7a1a, roughness: 0.4 });
+const engineGeo = new THREE.BoxGeometry(0.5, 0.8, 0.35);
+const engineMat = new THREE.MeshStandardMaterial({ color: 0x111111, metalness: 0.8 });
 
-// Red Bottom Trim Stripe
-const trimGeo = new THREE.BoxGeometry(3.62, 0.25, 1.62);
-const trimMat = new THREE.MeshStandardMaterial({ color: 0xdc3545, roughness: 0.3 });
-const trimMesh = new THREE.Mesh(trimGeo, trimMat);
-trimMesh.position.set(0, 0.05, 0);
-boatGroup.add(trimMesh);
+// Port + Starboard Pontoon Hulls (each with a tapered bow and stern engine)
+[HULL_Z_OFFSET, -HULL_Z_OFFSET].forEach(z => {
+    const hullMesh = new THREE.Mesh(hullGeo, hullMat);
+    hullMesh.rotation.z = Math.PI / 2;
+    hullMesh.position.set(-0.1, 0.2, z);
+    hullMesh.castShadow = true;
+    boatGroup.add(hullMesh);
 
-// Tapered Bow Point
-const bowGeo = new THREE.ConeGeometry(0.8, 1.2, 4);
-const bowMesh = new THREE.Mesh(bowGeo, hullMat);
-bowMesh.rotation.x = Math.PI / 2;
-bowMesh.rotation.z = -Math.PI / 2;
-bowMesh.position.set(2.4, 0.2, 0);
-boatGroup.add(bowMesh);
+    const bowMesh = new THREE.Mesh(bowGeo, hullMat);
+    bowMesh.rotation.z = -Math.PI / 2;
+    bowMesh.position.set(1.9, 0.2, z);
+    boatGroup.add(bowMesh);
 
-// Glass Cabin Bridge
-const cabinGeo = new THREE.BoxGeometry(1.5, 0.85, 1.2);
-const cabinMat = new THREE.MeshStandardMaterial({ color: 0x1c2833, roughness: 0.05, metalness: 0.9, transparent: true, opacity: 0.85 });
-const cabinMesh = new THREE.Mesh(cabinGeo, cabinMat);
-cabinMesh.position.set(-0.2, 0.8, 0);
-boatGroup.add(cabinMesh);
+    const engMesh = new THREE.Mesh(engineGeo, engineMat);
+    engMesh.position.set(-1.8, 0.2, z);
+    boatGroup.add(engMesh);
+});
+
+// Open Frame Bridging the Two Hulls (crossbeams, not a solid deck)
+const beamGeo = new THREE.CylinderGeometry(0.05, 0.05, HULL_Z_OFFSET * 2 + 0.2, 8);
+[1.0, -1.0].forEach(x => {
+    const beamMesh = new THREE.Mesh(beamGeo, accentMat);
+    beamMesh.rotation.x = Math.PI / 2;
+    beamMesh.position.set(x, 0.55, 0);
+    boatGroup.add(beamMesh);
+});
+
+// Flat Equipment Deck on top of the frame
+const deckGeo = new THREE.BoxGeometry(1.85, 0.08, HULL_Z_OFFSET * 2 - 0.1);
+const deckMesh = new THREE.Mesh(deckGeo, accentMat);
+deckMesh.position.set(0, 0.62, 0);
+boatGroup.add(deckMesh);
+
+// Electronics/Sensor Pod
+const podGeo = new THREE.BoxGeometry(1.0, 0.5, 0.9);
+const podMat = new THREE.MeshStandardMaterial({ color: 0xdddddd, roughness: 0.3 });
+const podMesh = new THREE.Mesh(podGeo, podMat);
+podMesh.position.set(-0.2, 0.95, 0);
+boatGroup.add(podMesh);
 
 // Navigation Arch & Lidar Mast
 const archGeo = new THREE.CylinderGeometry(0.04, 0.04, 1.2);
 const archMat = new THREE.MeshStandardMaterial({ color: 0x888888, metalness: 0.9 });
-const mast1 = new THREE.Mesh(archGeo, archMat); mast1.position.set(-0.8, 1.3, 0.5);
-const mast2 = new THREE.Mesh(archGeo, archMat); mast2.position.set(-0.8, 1.3, -0.5);
+const mast1 = new THREE.Mesh(archGeo, archMat); mast1.position.set(-0.8, 1.4, 0.5);
+const mast2 = new THREE.Mesh(archGeo, archMat); mast2.position.set(-0.8, 1.4, -0.5);
 const topBar = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 1.2), archMat);
-topBar.position.set(-0.8, 1.9, 0);
+topBar.position.set(-0.8, 2.0, 0);
 boatGroup.add(mast1, mast2, topBar);
 
 // Rotating Radar Dome
@@ -612,15 +634,8 @@ let radarMesh;
 const radarGeo = new THREE.CylinderGeometry(0.4, 0.4, 0.15, 16);
 const radarMat = new THREE.MeshStandardMaterial({ color: 0xffffff });
 radarMesh = new THREE.Mesh(radarGeo, radarMat);
-radarMesh.position.set(-0.8, 2.05, 0);
+radarMesh.position.set(-0.8, 2.15, 0);
 boatGroup.add(radarMesh);
-
-// Outboard Twin Engines at Stern
-const engineGeo = new THREE.BoxGeometry(0.5, 0.8, 0.35);
-const engineMat = new THREE.MeshStandardMaterial({ color: 0x111111, metalness: 0.8 });
-const eng1 = new THREE.Mesh(engineGeo, engineMat); eng1.position.set(-2.0, 0.2, 0.4);
-const eng2 = new THREE.Mesh(engineGeo, engineMat); eng2.position.set(-2.0, 0.2, -0.4);
-boatGroup.add(eng1, eng2);
 
 scene.add(boatGroup);
 

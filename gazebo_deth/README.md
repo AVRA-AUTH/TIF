@@ -106,6 +106,11 @@ The web UI has three modes:
 - **Mode 3 — Autonomous Docking**: click a berth on the zoomed-in marina map
   and watch the ASV navigate and dock itself.
 
+Note: the 3D view in the web UI is its own hand-built Three.js model, not a
+live render of Gazebo's simulation — only the boat's position/rotation are
+synced from real odometry, its shape is fixed. To see Gazebo's actual
+simulated model (e.g. the real WAM-V hull mesh), see GUI mode below.
+
 ## Development: editing the ROS code with working IntelliSense
 
 If you're editing the ROS nodes ([src/asv_exhibition/scripts/](src/asv_exhibition/scripts/))
@@ -138,4 +143,4 @@ only accepts keyboard/on-screen input through the web UI. Seeing Gazebo's
 own native render window, or driving with a real USB gamepad instead of the
 keyboard, needs extra setup (X11 socket passthrough for the former,
 `/dev/input` device passthrough for the latter) that isn't wired up here.
-Might be added later
+Ask if you want that added.
