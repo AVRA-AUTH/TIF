@@ -20,21 +20,23 @@ ROS 2 Humble + Gazebo environment.
 
 ## Quick start (all platforms)
 
+Clone the repo (one-time):
 ```
 git clone https://github.com/AVRA-AUTH/TIF.git
 cd TIF/gazebo_deth
 ```
 
-if it is already cloned, for each time you open this, run:
+Then, every time you want to run it:
 ```
 docker build -f docker/Dockerfile -t asv_exhibition .
 docker run --rm -p 9090:9090 asv_exhibition
 ```
-
 The first build downloads and compiles a fair amount (ROS 2 Humble desktop +
-Gazebo + Nav2), so it can take several minutes — later builds are cached and
-much faster. Once the container logs settle (you'll see `Rosbridge WebSocket
-server started on port 9090`), it's ready.
+Gazebo + Nav2), so it can take several minutes. After that, Docker only
+rebuilds layers that actually changed, so re-running the build command costs
+almost nothing unless `docker/` or `src/` changed since last time. Once the
+container logs settle (you'll see `Rosbridge WebSocket server started on port
+9090`), it's ready.
 
 Open [web_ui/index.html](web_ui/index.html) in a browser (just double-click
 it, or drag it into a browser window). The status badge in the top-left
@@ -103,6 +105,31 @@ The web UI has three modes:
   and the status badge to be green.
 - **Mode 3 — Autonomous Docking**: click a berth on the zoomed-in marina map
   and watch the ASV navigate and dock itself.
+
+## Development: editing the ROS code with working IntelliSense
+
+If you're editing the ROS nodes ([src/asv_exhibition/scripts/](src/asv_exhibition/scripts/))
+rather than just running the sim, plain VS Code won't have autocomplete or
+jump-to-definition for `rclpy`, message types, etc. — those only exist inside
+the container, not on your host. [.devcontainer/devcontainer.json](.devcontainer/devcontainer.json)
+sets up a VS Code Dev Container that attaches directly inside the same image
+you already build above, where those paths are real:
+
+1. Install the "Dev Containers" extension in VS Code.
+2. Open the `gazebo_deth` folder itself in VS Code (not the repo root —
+   this config is specific to this project).
+3. Command palette → **Dev Containers: Reopen in Container**. First run
+   builds the image (same one as above, so mostly cached if you've already
+   built it); later runs are instant.
+
+`src/` is live-mounted, so edits show up immediately without rebuilding the
+image. To actually launch the sim from inside that container's terminal
+(rather than a separate `docker run`):
+```
+source /opt/ros/humble/setup.bash
+source /workspace/install/setup.bash
+ros2 launch asv_exhibition exhibition.launch.py headless:=true
+```
 
 ## Advanced: GUI mode / physical joystick
 

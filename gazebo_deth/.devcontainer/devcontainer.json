@@ -1,0 +1,23 @@
+{
+    "name": "ASV Exhibition (ROS 2 Humble)",
+    "build": {
+        "dockerfile": "../docker/Dockerfile",
+        "context": ".."
+    },
+    // The image's own ENTRYPOINT launches Gazebo immediately, which is right
+    // for `docker run` but wrong for an editing session — this keeps the
+    // container idle so VS Code can attach a shell instead.
+    "overrideCommand": true,
+    "workspaceFolder": "/workspace",
+    "workspaceMount": "source=${localWorkspaceFolder}/src,target=/workspace/src,type=bind,consistency=cached",
+    "remoteUser": "root",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-vscode.cpptools",
+                "ms-python.python",
+                "ms-iot.vscode-ros"
+            ]
+        }
+    }
+}
