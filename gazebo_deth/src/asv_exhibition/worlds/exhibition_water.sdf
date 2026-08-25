@@ -207,15 +207,36 @@
            settling to equilibrium at roughly 60-70% of that before the
            clamp, not sinking through it. Still a starting point for further
            empirical tuning (float height/stability), just no longer
-           physically incapable of floating. -->
+           physically incapable of floating.
+
+           Point x-offsets recentered to ±0.305 (was 0.18/-0.43): those
+           original values put the two sample points' midpoint at
+           x=(0.18-0.43)/2=-0.125, i.e. 0.125m aft of the actual center of
+           mass (base_link origin, x=0) — same 0.61m fore-aft span, just not
+           centered. Confirmed via a captured /odom trace that this was a
+           real problem, not theoretical: pitch oscillated in lockstep with
+           the non-decaying heave bounce (same ~5s period, quarter-cycle
+           phase offset) and never crossed zero — sitting at a persistent
+           ~2.5-3° nose-up bias the whole time. An off-center buoyancy
+           point pair produces exactly that: a standing trim moment plus a
+           heave-pitch coupling that continuously trades energy between the
+           two modes instead of letting heave settle as a clean single-DOF
+           damped bounce. Recentering removes the parasitic moment without
+           changing total buoyant force or float height (same span, same
+           hull_radius/hull_length). Re-verify pitch/heave against a fresh
+           /odom capture — this fixes a real structural asymmetry but
+           hasn't been confirmed to fully resolve the bounce (see
+           HANDOFF.md's hull_radius ceiling finding: amplitude may still
+           exceed the ~0.065m headroom that limits any hull_radius choice,
+           heave-pitch coupling notwithstanding). -->
       <plugin filename="libSurface.so" name="vrx::Surface">
         <link_name>base_link</link_name>
         <hull_length>1.5</hull_length>
         <hull_radius>0.10</hull_radius>
         <fluid_level>0</fluid_level>
         <points>
-          <point>0.18 0.38 0</point>
-          <point>-0.43 0.38 0</point>
+          <point>0.305 0.38 0</point>
+          <point>-0.305 0.38 0</point>
         </points>
       </plugin>
       <plugin filename="libSurface.so" name="vrx::Surface">
@@ -224,8 +245,8 @@
         <hull_radius>0.10</hull_radius>
         <fluid_level>0</fluid_level>
         <points>
-          <point>0.18 -0.38 0</point>
-          <point>-0.43 -0.38 0</point>
+          <point>0.305 -0.38 0</point>
+          <point>-0.305 -0.38 0</point>
         </points>
       </plugin>
 
@@ -271,8 +292,28 @@
         <xUU>16.24</xUU>
         <yV>22.5</yV>
         <yVV>7.5</yVV>
-        <zW>30.0</zW>
-        <zWW>15.0</zWW>
+        <!-- CORRECTED. A previous pass here guessed zW/zWW = 100.0/50.0 to
+             fight a non-decaying heave oscillation — that was a mistake: it
+             overrode real MATLAB data with an empirical guess without
+             checking the source first, and a controlled /odom test showed
+             it made the coupled horizontal drift worse (~5.5m net drift vs
+             ~2.6m at the original 30.0/15.0), not better.
+             The real source is /home/evangelia/Documents/AVRA/Matlab/
+             ASV_BMS/init_catamaran.m: vessel.D = diag([0.7,15,20,5,10,8]),
+             vessel.Dn = diag([Dn11_derived,5,10,0,0,0]) in
+             [surge,sway,heave,roll,pitch,yaw] order — index 3 (heave) is
+             D(3,3)=20, Dn(3,3)=10. The previous 30.0/15.0 applied a 1.5x
+             mass-scaling factor (from an early 30kg vs. this MATLAB model's
+             20kg) that's now stale: this SDF's mass is 20.0kg, matching the
+             MATLAB model exactly (see HANDOFF.md's "known loose end" on the
+             same stale 1.5x already affecting xU/xUU/yV/yVV before this).
+             Using the unscaled values directly. NOTE: fixing this value did
+             NOT fix the heave oscillation — see HANDOFF.md for why (root
+             cause is hull_radius saturation in vrx::Surface, a separate,
+             deeper issue; read from Surface.cc source directly, not
+             guessed). -->
+        <zW>20.0</zW>
+        <zWW>10.0</zWW>
         <kP>7.5</kP>
         <kPP>0.0</kPP>
         <mQ>15.0</mQ>
@@ -289,6 +330,15 @@
            500N/side would settle well past 6 m/s — recomputed here instead
            of left stale): xU*v + xUU*v^2 = 1.05*6 + 16.24*36 ≈ 591N total
            at this boat's existing 6.0 m/s MAX_LINEAR_FWD target, ~300N/side.
+           min_thrust_cmd recomputed the same way: the original -180N/side
+           let commanded reverse (cmd_vel_thrust_mixer.py applies the full
+           linear_thrust to BOTH thrusters, not split in half) saturate that
+           floor and settle at ~4.7 m/s in real testing — nowhere near
+           web_ui/app.js's intended MAX_LINEAR_REV = -1.5 m/s slow-astern
+           behavior. Solving the same drag balance for that target instead:
+           xU*v + xUU*v^2 = 1.05*1.5 + 16.24*1.5^2 ≈ 38.1N total, ~19.1N/side
+           — giving the boat a genuinely weak reverse, matching how reverse
+           thrust is much weaker than forward on most real vessels.
            thrust_coefficient/propeller_diameter/fluid_density copied from
            VRX's own wamv_gazebo_thruster_config.xacro reference (diameter
            scaled by the same 0.306 length factor); velocity_control=true
@@ -312,7 +362,7 @@
         <propeller_diameter>0.06</propeller_diameter>
         <velocity_control>true</velocity_control>
         <max_thrust_cmd>300</max_thrust_cmd>
-        <min_thrust_cmd>-180</min_thrust_cmd>
+        <min_thrust_cmd>-19.1</min_thrust_cmd>
         <topic>thrusters/left/thrust</topic>
       </plugin>
       <plugin filename="gz-sim-thruster-system" name="gz::sim::systems::Thruster">
@@ -322,7 +372,7 @@
         <propeller_diameter>0.06</propeller_diameter>
         <velocity_control>true</velocity_control>
         <max_thrust_cmd>300</max_thrust_cmd>
-        <min_thrust_cmd>-180</min_thrust_cmd>
+        <min_thrust_cmd>-19.1</min_thrust_cmd>
         <topic>thrusters/right/thrust</topic>
       </plugin>
 

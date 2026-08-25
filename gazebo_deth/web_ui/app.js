@@ -122,13 +122,14 @@ function triggerShipwreck(entity) {
 // freezing on the last update above a threshold.
 odomTopic.subscribe((msg) => {
     if (activeAppMode !== 2) return;
-    const gzSpeed = Math.sqrt(
-        Math.pow(msg.twist.twist.linear.x, 2) +
-        Math.pow(msg.twist.twist.linear.y, 2)
-    );
+    // twist is in the child_frame (base_link, body frame) per this odometry
+    // plugin's config (robot_base_frame: base_link) — linear.x is signed
+    // surge speed (forward positive, reverse negative) directly, not a
+    // magnitude. Using sqrt(x^2+y^2) here used to erase the sign, making
+    // reverse motion indistinguishable from forward on the telemetry panel.
     boatPos.x = msg.pose.pose.position.x;
     boatPos.y = msg.pose.pose.position.y;
-    boatPos.speed = gzSpeed;
+    boatPos.speed = msg.twist.twist.linear.x;
     const q = msg.pose.pose.orientation;
     boatPos.yaw = Math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z));
 });
@@ -2095,19 +2096,19 @@ function thrusterLoop() {
     lastThrusterTime = now;
 
     if (activeAppMode === 2) {
-        // EXPERIMENT: forward demand uncapped (was MAX_LINEAR_FWD = 6.0) to
-        // see whether top speed is really set by real thrust/drag physics or
-        // by this JS ceiling — cmd_vel.linear.x is allowed to ramp well past
-        // the thruster saturation point (~3.6 m/s, where 166.7*v/2 hits the
-        // 300N-per-side max_thrust_cmd in exhibition_water.sdf); Gazebo's own
-        // force cap + hydrodynamic drag should settle the boat at its real
-        // equilibrium speed regardless of how high this demand goes. Revert
-        // to MAX_LINEAR_FWD once you've seen the result.
-        const targetLinear = heldAxes.has('fwd') ? 20.0 : heldAxes.has('rev') ? MAX_LINEAR_REV : 0.0;
+        const targetLinear = heldAxes.has('fwd') ? MAX_LINEAR_FWD : heldAxes.has('rev') ? MAX_LINEAR_REV : 0.0;
         const targetAngular = heldAxes.has('left') ? MAX_ANGULAR : heldAxes.has('right') ? -MAX_ANGULAR : 0.0;
 
-        currentLinear = approachVelocity(currentLinear, targetLinear, dt);
-        currentAngular = approachVelocity(currentAngular, targetAngular, dt);
+        // Ramp UP toward a held throttle position (eases the lever open over
+        // THRUST_RAMP_RATE), but cut instantly to 0 on release instead of
+        // fading via WATER_FRICTION_RATE. Real Gazebo drag
+        // (vrx::SimpleHydrodynamics) now provides the actual coast-down —
+        // ramping the outgoing demand down too kept commanding real, decaying
+        // thrust for several seconds after release, double-applying
+        // deceleration on top of real drag and masking its true
+        // fast-then-slow (quadratic-then-linear) shape.
+        currentLinear = targetLinear !== 0.0 ? approachVelocity(currentLinear, targetLinear, dt) : 0.0;
+        currentAngular = targetAngular !== 0.0 ? approachVelocity(currentAngular, targetAngular, dt) : 0.0;
 
         // boatPos itself is NOT integrated here — it comes solely from the
         // /odom subscription above, so what's rendered is Gazebo's real
@@ -2141,7 +2142,7 @@ function thrusterLoop() {
         }
         document.getElementById('tele-x').textContent = boatPos.x.toFixed(2);
         document.getElementById('tele-y').textContent = boatPos.y.toFixed(2);
-        document.getElementById('tele-speed').textContent = Math.abs(boatPos.speed).toFixed(2);
+        document.getElementById('tele-speed').textContent = boatPos.speed.toFixed(2);
     }
 
     requestAnimationFrame(thrusterLoop);
