@@ -115,19 +115,22 @@ function triggerShipwreck(entity) {
     }, 100);
 }
 
-// Listen to boat Odometry (Only sync when Gazebo physics is actively driving in Mode 2)
+// Listen to boat Odometry — the sole source of boatPos in Mode 2 (Modes 1/3
+// keep their own client-side kinematic sim; see draw()'s nav-state-machine
+// block). Always sync while in Mode 2, including down to zero speed, so a
+// released thruster genuinely shows Gazebo's real coast-down instead of
+// freezing on the last update above a threshold.
 odomTopic.subscribe((msg) => {
+    if (activeAppMode !== 2) return;
     const gzSpeed = Math.sqrt(
         Math.pow(msg.twist.twist.linear.x, 2) +
         Math.pow(msg.twist.twist.linear.y, 2)
     );
-    if (activeAppMode === 2 && gzSpeed > 0.05) {
-        boatPos.x = msg.pose.pose.position.x;
-        boatPos.y = msg.pose.pose.position.y;
-        boatPos.speed = gzSpeed;
-        const q = msg.pose.pose.orientation;
-        boatPos.yaw = Math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z));
-    }
+    boatPos.x = msg.pose.pose.position.x;
+    boatPos.y = msg.pose.pose.position.y;
+    boatPos.speed = gzSpeed;
+    const q = msg.pose.pose.orientation;
+    boatPos.yaw = Math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z));
 });
 
 // Canvas Setup (Massive World: 1 meter = 0.65 pixels for 600m wide ocean lake/bay)
@@ -991,7 +994,11 @@ function findOptimalPath(start, goal, obstacles) {
 }
 
 // Render & Motion Loop
+let lastNavTime = performance.now();
 function draw() {
+    const navNow = performance.now();
+    const navDt = Math.min((navNow - lastNavTime) / 1000, 0.1); // clamp so a stalled tab doesn't jump
+    lastNavTime = navNow;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     // 1. Render Outer Land Mass Background (Forest Green)
@@ -1132,68 +1139,125 @@ function draw() {
                 if (advancePath) {
                     pathIndex++;
                 } else {
-                    const maxRudderStep = 0.022;
-                    let turnStep = Math.max(-maxRudderStep, Math.min(maxRudderStep, yawDiff * 0.06));
-
-                    let baseTargetSpeed = 1.8;
-                    let turnDragFactor = Math.max(0.45, Math.cos(yawDiff * 0.6));
+                    // Unified movement model: this drives Mode 1's auto-nav and Mode 3's
+                    // docking with the SAME momentum/braking physics Mode 2 uses for manual
+                    // driving (currentLinear/currentAngular ramped via approachVelocity,
+                    // capped by MAX_LINEAR_FWD/MAX_LINEAR_REV/MAX_ANGULAR), instead of the
+                    // old separate model that set speed directly every frame with no
+                    // momentum at all (instantly matching a fixed per-state speed, then
+                    // snapping to the next state's speed with no transition).
+                    let cruiseSpeed = MAX_LINEAR_FWD;
+                    let angularGain = 1.0; // rad/s of turn commanded per rad of heading error
+                    let pivotOnly = false;  // true = zero forward speed, pure rotation (align)
+                    // Deceleration used to compute AND perform the final glide to a stop.
+                    // WATER_FRICTION_RATE (1.0) is tuned for Mode 2's up-to-6.0 m/s manual
+                    // driving — reused as-is here, a slow ~1.3 m/s docking leg only gets
+                    // ~0.85m / ~1.3s of braking before reaching zero, which reads as a
+                    // sudden stop rather than a gradual one. The close-quarters docking
+                    // legs (approach/creep/reverse_swing) use a gentler, dedicated rate
+                    // instead, giving a multi-second, clearly visible glide to a stop —
+                    // still the same ramp-toward-a-target mechanism, just paced for a
+                    // careful docking maneuver instead of open-water cruising.
+                    let brakeDecel = WATER_FRICTION_RATE;
 
                     // DOCKING STATE MACHINE
                     if (isAutoDocking) {
                         if (target.mode === 'transit') {
-                            baseTargetSpeed = 1.2;
+                            cruiseSpeed = MAX_LINEAR_FWD;
                             document.getElementById('tele-status').textContent = '⚓ STATE 1: Transit to Staging Area...';
                             document.getElementById('tele-status').style.color = '#00ffcc';
                         } else if (target.mode === 'align') {
                             // STATE 2: PIVOT ALIGNMENT (Zero forward speed, pivot in place!)
-                            baseTargetSpeed = 0.0;
-                            turnDragFactor = 0.0;
-                            turnStep = Math.max(-0.035, Math.min(0.035, yawDiff * 0.1)); // Stronger pivot thrust
+                            pivotOnly = true;
+                            angularGain = 3.0; // decisive pivot, saturates to MAX_ANGULAR quickly
                             document.getElementById('tele-status').textContent = '🔵 STATE 2: Pivoting to Alignment...';
                             document.getElementById('tele-status').style.color = '#ffaa00';
                         } else if (target.mode === 'approach') {
-                            // Angled Approach (Slow forward)
-                            baseTargetSpeed = 0.45;
-                            turnStep = Math.max(-0.015, Math.min(0.015, yawDiff * 0.1));
+                            // Angled Approach, braking into the berth
+                            cruiseSpeed = 1.6;
+                            brakeDecel = 0.3;
                             document.getElementById('tele-status').textContent = '🟢 STATE 3: Angled Approach...';
                             document.getElementById('tele-status').style.color = '#00ff00';
                         } else if (target.mode === 'reverse_swing') {
-                            // Reverse Swing (Reverse speed + hard rudder)
-                            baseTargetSpeed = -0.4;
-                            turnStep = Math.max(-0.04, Math.min(0.04, yawDiff * 0.2)); // Hard pivot while reversing
+                            // Reverse Swing (Reverse speed + hard rudder, braking into position)
+                            cruiseSpeed = -1.3;
+                            angularGain = 2.0; // hard pivot while reversing
+                            brakeDecel = 0.3;
                             document.getElementById('tele-status').textContent = '🟣 STATE 4: Reversing & Swinging Stern...';
                             document.getElementById('tele-status').style.color = '#cc00ff';
                         } else if (target.mode === 'creep') {
-                            // STATE 3: CREEP INSERTION (Micro-speed linear slide)
-                            baseTargetSpeed = 0.35;
-                            turnStep = Math.max(-0.015, Math.min(0.015, yawDiff * 0.1)); // Extremely tight heading hold
+                            // STATE 3: CREEP INSERTION, braking to a stop at the slot
+                            cruiseSpeed = 1.3;
+                            brakeDecel = 0.3;
                             document.getElementById('tele-status').textContent = '🟢 STATE 3: Creep Insertion...';
                             document.getElementById('tele-status').style.color = '#00ff00';
                         }
                     }
 
-                    boatPos.yaw += turnStep;
+                    // Slow the cruise target when off-heading (unrelated to stopping —
+                    // just don't cruise at full speed while turning sharply)
+                    const turnDragFactor = Math.max(0.45, Math.cos(yawDiff * 0.6));
+                    cruiseSpeed *= turnDragFactor;
+
+                    // --- Linear: cruise, then glide to a stop exactly at the waypoint ---
+                    if (pivotOnly) {
+                        currentLinear = approachVelocity(currentLinear, 0.0, navDt);
+                    } else {
+                        const brakeDist = (currentLinear * currentLinear) / (2 * brakeDecel);
+                        if (dist > brakeDist) {
+                            // Plenty of room — cruise (accelerating toward it via THRUST_RAMP_RATE
+                            // if not already there)
+                            currentLinear = approachVelocity(currentLinear, cruiseSpeed, navDt);
+                        } else {
+                            // Inside the braking window: decelerate at brakeDecel directly,
+                            // rather than through approachVelocity's hardcoded
+                            // WATER_FRICTION_RATE — the rate used to decide WHEN to start
+                            // braking has to match the rate actually applied, or a gentler
+                            // brakeDecel here would never actually produce the longer glide
+                            // the brakeDist above was computed for.
+                            const step = brakeDecel * navDt;
+                            if (Math.abs(currentLinear) <= step) {
+                                currentLinear = 0;
+                            } else {
+                                currentLinear -= Math.sign(currentLinear) * step;
+                            }
+                            // Safety net: if there's somehow still less room than this needs
+                            // (e.g. the path got recalculated mid-leg), brake harder with
+                            // reverse thrust instead of overshooting.
+                            const requiredDecel = (currentLinear * currentLinear) / (2 * Math.max(dist, 0.05));
+                            if (requiredDecel > brakeDecel * 2.0 && Math.abs(currentLinear) > 0.05) {
+                                const reverseTarget = -Math.sign(currentLinear) * Math.min(Math.abs(MAX_LINEAR_REV), 1.0);
+                                currentLinear = approachVelocity(currentLinear, reverseTarget, navDt);
+                            }
+                        }
+                    }
+                    currentLinear = Math.max(MAX_LINEAR_REV, Math.min(MAX_LINEAR_FWD, currentLinear));
+
+                    // --- Angular: proportional heading control, capped at MAX_ANGULAR ---
+                    const targetAngular = Math.sign(yawDiff) * Math.min(MAX_ANGULAR, Math.abs(yawDiff) * angularGain);
+                    currentAngular = approachVelocity(currentAngular, targetAngular, navDt);
+
+                    boatPos.yaw += currentAngular * navDt;
+                    boatPos.speed = currentLinear;
+                    boatPos.x += Math.cos(boatPos.yaw) * currentLinear * navDt;
+                    boatPos.y += Math.sin(boatPos.yaw) * currentLinear * navDt;
 
                     // Hydrodynamic Roll Banking: Lean boat hull realistically into turns in 3D
                     if (boatGroup && !isShipwrecked) {
-                        boatGroup.rotation.z = -turnStep * 8.5;
+                        boatGroup.rotation.z = -currentAngular * 0.15;
                     }
 
-                    boatPos.speed = baseTargetSpeed * turnDragFactor;
-                    
-                    // Realistic Kinematics (No Magic Sideways Sliding)
-                    boatPos.x += Math.cos(boatPos.yaw) * (boatPos.speed * 0.07);
-                    boatPos.y += Math.sin(boatPos.yaw) * (boatPos.speed * 0.07);
-
-                    // Send cmd_vel to ROS with smooth rudder angular velocity
+                    // Send cmd_vel to ROS
                     const twist = new ROSLIB.Message({
-                        linear: { x: boatPos.speed, y: 0.0, z: 0.0 },
-                        angular: { x: 0.0, y: 0.0, z: turnStep * 10.0 }
+                        linear: { x: currentLinear, y: 0.0, z: 0.0 },
+                        angular: { x: 0.0, y: 0.0, z: currentAngular }
                     });
                     cmdVelTopic.publish(twist);
                 }
             } else {
                 isNavigating = false;
+                currentLinear = 0;
+                currentAngular = 0;
                 boatPos.speed = 0;
 
                 // Publish zero velocity to ROS to freeze boat motors
@@ -1505,21 +1569,10 @@ function draw() {
     // Sync 3D Scene & FPV Camera
     sync3DEntities();
 
-    // Water Wave Animation (Realistic fluid harmonic swells)
+    // Water stays flat — matches the actual sim, which has no wave field
+    // (vrx::Surface here is flat-fluid-level buoyancy only, no vrx::Wavefield
+    // plugin is instantiated; see exhibition_water.sdf).
     const time = Date.now() * 0.0015;
-    const position = waterGeo.attributes.position;
-
-    for (let i = 0; i < position.count; i++) {
-        const u = position.getX(i);
-        const v = position.getY(i);
-        // Dramatic rolling sea swells with high amplitude and crisp wave crests
-        const z = Math.sin(u * 0.14 + time) * 0.65
-            + Math.cos(v * 0.14 + time * 1.3) * 0.45
-            + Math.sin((u + v) * 0.22 + time * 1.8) * 0.25;
-        position.setZ(i, z);
-    }
-    position.needsUpdate = true;
-    waterGeo.computeVertexNormals();
 
     // Drift Clouds Slowly Across Sky
     clouds.forEach(cloud => {
@@ -1847,6 +1900,17 @@ if (mode1Btn) {
 
 if (mode2Btn) {
     mode2Btn.addEventListener('click', () => {
+        // Mode 1/3 auto-navigation shares currentLinear/currentAngular with
+        // Mode 2's manual thruster loop (same underlying physics model) — stop
+        // any in-progress auto-nav so the two don't both drive it at once.
+        if (isNavigating) {
+            isNavigating = false;
+            isAutoDocking = false;
+            cmdVelTopic.publish(new ROSLIB.Message({
+                linear: { x: 0.0, y: 0.0, z: 0.0 },
+                angular: { x: 0.0, y: 0.0, z: 0.0 }
+            }));
+        }
         activeAppMode = 2;
         mode2Btn.classList.add('active');
         if (mode1Btn) mode1Btn.classList.remove('active');
@@ -1895,11 +1959,20 @@ function startDynamicDocking(chosen) {
     let dockWaypoints = [];
     if (chosen.name.includes('Spine Pier')) {
         if (isParallelMode) {
+            // Pivoting sweeps the hull's footprint out to its full length
+            // (up to ~2.8m of clearance at some angle during the turn), not
+            // just its parked width — aligning right at the berth's own
+            // ros_y (only ~1.8m off the wall) let the hull clip the wall
+            // mid-turn even though the boat's center never got close.
+            // Align a safe distance further out, then creep the last stretch
+            // into the tight slot already parallel to the wall.
+            const ALIGN_WALL_MARGIN = 3.0;
+            const alignY = chosen.ros_y + ALIGN_WALL_MARGIN;
             dockWaypoints = [
                 { x: boatPos.x, y: boatPos.y, mode: 'transit' },
                 { x: chosen.corridor_x, y: -105.0, mode: 'transit' },
-                { x: chosen.corridor_x, y: chosen.ros_y, mode: 'transit' },
-                { x: chosen.corridor_x, y: chosen.ros_y, mode: 'align', targetYaw: chosen.parkedYaw },
+                { x: chosen.corridor_x, y: alignY, mode: 'transit' },
+                { x: chosen.corridor_x, y: alignY, mode: 'align', targetYaw: chosen.parkedYaw },
                 { x: chosen.ros_x, y: chosen.ros_y, mode: 'creep' }
             ];
         } else {
@@ -2022,17 +2095,26 @@ function thrusterLoop() {
     lastThrusterTime = now;
 
     if (activeAppMode === 2) {
-        const targetLinear = heldAxes.has('fwd') ? MAX_LINEAR_FWD : heldAxes.has('rev') ? MAX_LINEAR_REV : 0.0;
+        // EXPERIMENT: forward demand uncapped (was MAX_LINEAR_FWD = 6.0) to
+        // see whether top speed is really set by real thrust/drag physics or
+        // by this JS ceiling — cmd_vel.linear.x is allowed to ramp well past
+        // the thruster saturation point (~3.6 m/s, where 166.7*v/2 hits the
+        // 300N-per-side max_thrust_cmd in exhibition_water.sdf); Gazebo's own
+        // force cap + hydrodynamic drag should settle the boat at its real
+        // equilibrium speed regardless of how high this demand goes. Revert
+        // to MAX_LINEAR_FWD once you've seen the result.
+        const targetLinear = heldAxes.has('fwd') ? 20.0 : heldAxes.has('rev') ? MAX_LINEAR_REV : 0.0;
         const targetAngular = heldAxes.has('left') ? MAX_ANGULAR : heldAxes.has('right') ? -MAX_ANGULAR : 0.0;
 
         currentLinear = approachVelocity(currentLinear, targetLinear, dt);
         currentAngular = approachVelocity(currentAngular, targetAngular, dt);
 
-        if (currentLinear !== 0.0 || currentAngular !== 0.0) {
-            boatPos.x += Math.cos(boatPos.yaw) * currentLinear * dt;
-            boatPos.y += Math.sin(boatPos.yaw) * currentLinear * dt;
-            boatPos.yaw += currentAngular * dt;
-        }
+        // boatPos itself is NOT integrated here — it comes solely from the
+        // /odom subscription above, so what's rendered is Gazebo's real
+        // physics output, not a client-side guess. currentLinear/currentAngular
+        // below only shape the outgoing /cmd_vel ramp (how fast a held key
+        // opens the throttle), like a joystick position, not the boat's
+        // actual resulting motion.
 
         // Publish while moving/decaying; once settled at zero, send one
         // final stop and go quiet rather than flooding the bridge forever.
@@ -2059,7 +2141,7 @@ function thrusterLoop() {
         }
         document.getElementById('tele-x').textContent = boatPos.x.toFixed(2);
         document.getElementById('tele-y').textContent = boatPos.y.toFixed(2);
-        document.getElementById('tele-speed').textContent = Math.abs(currentLinear).toFixed(2);
+        document.getElementById('tele-speed').textContent = Math.abs(boatPos.speed).toFixed(2);
     }
 
     requestAnimationFrame(thrusterLoop);

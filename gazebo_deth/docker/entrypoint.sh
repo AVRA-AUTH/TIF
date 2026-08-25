@@ -12,11 +12,20 @@ for i in $(seq 1 20); do
     sleep 0.5
 done
 
-source /opt/ros/humble/setup.bash
+source /opt/ros/jazzy/setup.bash
 source /workspace/install/setup.bash
 
 # So `model://WAM-V-Base/...` etc. in exhibition_water.sdf resolve to the
 # meshes installed alongside the world file.
 export GZ_SIM_RESOURCE_PATH="/workspace/install/asv_exhibition/share/asv_exhibition/models:${GZ_SIM_RESOURCE_PATH}"
+
+# So the vrx::Surface / vrx::SimpleHydrodynamics plugins (copied into the
+# image from vrx_jazzy) resolve by filename="libSurface.so" etc. in
+# exhibition_water.sdf.
+export GZ_SIM_SYSTEM_PLUGIN_PATH="/opt/vrx_plugins:${GZ_SIM_SYSTEM_PLUGIN_PATH}"
+# libSurface.so's own transitive dependency (libWaves.so) isn't found via
+# GZ_SIM_SYSTEM_PLUGIN_PATH — that only controls where gz looks for the
+# *requested* plugin, not where the dynamic linker resolves its own deps.
+export LD_LIBRARY_PATH="/opt/vrx_plugins:${LD_LIBRARY_PATH}"
 
 exec ros2 launch asv_exhibition exhibition.launch.py "$@"

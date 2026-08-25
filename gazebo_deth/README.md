@@ -1,8 +1,9 @@
 # ASV Exhibition Simulator
 
-A ROS 2 Humble + Gazebo simulation of an autonomous surface vessel (ASV), with a
-browser-based control UI ([web_ui/](web_ui/)) for driving it, designing obstacle
-courses, and running autonomous docking demos.
+A ROS 2 Jazzy + Gazebo Harmonic simulation of an autonomous surface vessel (ASV),
+with a browser-based control UI ([web_ui/](web_ui/)) for driving it, designing
+obstacle courses, and running autonomous docking demos. Buoyancy and
+hydrodynamic drag are real Gazebo physics (see `HANDOFF.md`), not faked.
 
 Everything runs inside a Docker container — you don't need ROS or Gazebo
 installed on your machine, on any OS.
@@ -15,8 +16,17 @@ Install Docker for your platform:
 - **Windows**: [Docker Desktop](https://docs.docker.com/desktop/install/windows-install/), with the WSL2 backend (default on modern installs)
 - **macOS**: [Docker Desktop](https://docs.docker.com/desktop/install/mac-install/)
 
-No other software is required — the container carries its own Ubuntu 22.04 +
-ROS 2 Humble + Gazebo environment.
+No other software is required — the container carries its own Ubuntu 24.04 +
+ROS 2 Jazzy + Gazebo Harmonic environment.
+
+**One extra local requirement**: `docker/Dockerfile` copies VRX's compiled
+`libSurface.so`/`libSimpleHydrodynamics.so` buoyancy/hydrodynamics plugins
+out of a `vrx_jazzy:latest` image at build time (see `HANDOFF.md`), so that
+image must already exist locally (`docker images | grep vrx_jazzy`) before
+running `docker build` below — it isn't published on a registry this
+Dockerfile can pull automatically. If it's missing on your machine, ask
+whoever has it for the image (`docker save`/`docker load`), or see
+`HANDOFF.md` for how to build it from VRX's source.
 
 ## Quick start (all platforms)
 
@@ -31,10 +41,12 @@ Then, every time you want to run it:
 docker build -f docker/Dockerfile -t asv_exhibition .
 docker run --rm -p 9090:9090 asv_exhibition
 ```
-The first build downloads and compiles a fair amount (ROS 2 Humble desktop +
-Gazebo + Nav2), so it can take several minutes. After that, Docker only
-rebuilds layers that actually changed, so re-running the build command costs
-almost nothing unless `docker/` or `src/` changed since last time. Once the
+The first build downloads and compiles a fair amount (ROS 2 Jazzy desktop +
+Gazebo + Nav2, plus VRX's buoyancy/hydrodynamics plugins copied from the
+locally-built `vrx_jazzy` image), so it can take several
+minutes. After that, Docker only rebuilds layers that actually changed, so
+re-running the build command costs almost nothing unless `docker/` or `src/`
+changed since last time. Once the
 container logs settle (you'll see `Rosbridge WebSocket server started on port
 9090`), it's ready.
 
@@ -61,11 +73,15 @@ If you're specifically on **Ubuntu 22.04** (not 24.04 or newer), you also
 have the option to skip Docker entirely: install ROS 2 Humble + Gazebo
 directly via [setup_ubuntu.sh](setup_ubuntu.sh), then from `gazebo_deth/`,
 `colcon build`, `source install/setup.bash`, and
-`ros2 launch asv_exhibition exhibition.launch.py`. (Note: [run.sh](run.sh) in
-this folder assumes a WSL2 setup with a Windows-side source copy — it's not
-meant for a true native Ubuntu install, so use the commands above instead.)
-Docker is still recommended if you want your environment to match the rest
-of the team exactly, regardless of your Ubuntu version.
+`ros2 launch asv_exhibition exhibition.launch.py`. Note this native path
+still installs the older Humble/Gazebo Fortress stack — `setup_ubuntu.sh`
+hasn't been updated alongside the Docker path's move to Jazzy/Harmonic, so
+it won't have the real buoyancy/hydrodynamics physics described above.
+(Also: [run.sh](run.sh) in this folder assumes a WSL2 setup with a
+Windows-side source copy — it's not meant for a true native Ubuntu install,
+so use the commands above instead.) Docker is still recommended if you want
+your environment to match the rest of the team exactly, regardless of your
+Ubuntu version.
 
 ### Windows
 
@@ -85,7 +101,7 @@ physics-heavy sim like Gazebo.
 Use Docker Desktop the same way as Windows: `-p 9090:9090`, open
 `web_ui/index.html` by double-clicking it.
 
-**Apple Silicon (M1/M2/M3/M4) caveat:** the ROS 2 Humble base image this
+**Apple Silicon (M1/M2/M3/M4) caveat:** the ROS 2 Jazzy base image this
 project uses is only published for `amd64` (Intel/AMD), not `arm64`. On
 Apple Silicon, Docker Desktop will run it under emulation (Rosetta), which
 will be considerably slower — the build in particular may take a long time,
@@ -131,7 +147,7 @@ you already build above, where those paths are real:
 image. To actually launch the sim from inside that container's terminal
 (rather than a separate `docker run`):
 ```
-source /opt/ros/humble/setup.bash
+source /opt/ros/jazzy/setup.bash
 source /workspace/install/setup.bash
 ros2 launch asv_exhibition exhibition.launch.py headless:=true
 ```

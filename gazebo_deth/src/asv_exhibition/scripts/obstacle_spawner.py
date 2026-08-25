@@ -33,23 +33,23 @@ class ObstacleSpawner(Node):
                 # 1. Remove all spawned obstacles from Gazebo world
                 for obs_id in list(self.spawned_ids):
                     cmd = [
-                        'ign', 'service',
+                        'gz', 'service',
                         '-s', '/world/exhibition_water_world/remove',
-                        '--reqtype', 'ignition.msgs.Entity',
-                        '--reptype', 'ignition.msgs.Boolean',
+                        '--reqtype', 'gz.msgs.Entity',
+                        '--reptype', 'gz.msgs.Boolean',
                         '--timeout', '1000',
                         '--req', f'name: "{obs_id}" type: MODEL'
                     ]
                     subprocess.Popen(cmd)
-                
+
                 self.spawned_ids.clear()
 
                 # 2. Reset boat pose to origin in Gazebo
                 reset_pose_cmd = [
-                    'ign', 'service',
+                    'gz', 'service',
                     '-s', '/world/exhibition_water_world/set_pose',
-                    '--reqtype', 'ignition.msgs.Pose',
-                    '--reptype', 'ignition.msgs.Boolean',
+                    '--reqtype', 'gz.msgs.Pose',
+                    '--reptype', 'gz.msgs.Boolean',
                     '--timeout', '1000',
                     '--req', 'name: "asv_boat" position { x: 0 y: 0 z: 0.2 } orientation { w: 1 }'
                 ]
@@ -99,12 +99,12 @@ class ObstacleSpawner(Node):
                 </sdf>
                 """
 
-            # Call Ignition Gazebo spawn service
+            # Call Gazebo spawn service
             cmd = [
-                'ign', 'service',
+                'gz', 'service',
                 '-s', '/world/exhibition_water_world/create',
-                '--reqtype', 'ignition.msgs.EntityFactory',
-                '--reptype', 'ignition.msgs.Boolean',
+                '--reqtype', 'gz.msgs.EntityFactory',
+                '--reptype', 'gz.msgs.Boolean',
                 '--timeout', '1000',
                 '--req', f'sdf: "{sdf_string.replace(chr(10), " ")}"'
             ]

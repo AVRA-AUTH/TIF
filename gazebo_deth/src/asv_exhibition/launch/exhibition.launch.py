@@ -22,26 +22,32 @@ def generate_launch_description():
 
     # 1a. Gazebo Headless Server
     gazebo_server = ExecuteProcess(
-        cmd=['ign', 'gazebo', '-s', '-r', world_file],
+        cmd=['gz', 'sim', '-s', '-r', world_file],
         output='screen',
         condition=IfCondition(headless)
     )
 
     # 1b. Gazebo GUI
     gazebo_gui = ExecuteProcess(
-        cmd=['ign', 'gazebo', '-r', world_file],
+        cmd=['gz', 'sim', '-r', world_file],
         output='screen',
         condition=UnlessCondition(headless)
     )
 
     # 2. Bridge
+    # Thruster topics are /asv_boat/thrusters/{left,right}/thrust, not
+    # /thrusters/{left,right}/thrust — the Thruster plugin in
+    # exhibition_water.sdf always prefixes its <topic> with the model name
+    # (see the comment there for how this was found empirically).
     bridge_node = Node(
         package='ros_gz_bridge',
         executable='parameter_bridge',
         arguments=[
-            '/cmd_vel@geometry_msgs/msg/Twist@ignition.msgs.Twist',
-            '/odom@nav_msgs/msg/Odometry@ignition.msgs.Odometry',
-            '/scan@sensor_msgs/msg/LaserScan@ignition.msgs.LaserScan'
+            '/cmd_vel@geometry_msgs/msg/Twist@gz.msgs.Twist',
+            '/odom@nav_msgs/msg/Odometry@gz.msgs.Odometry',
+            '/scan@sensor_msgs/msg/LaserScan@gz.msgs.LaserScan',
+            '/asv_boat/thrusters/left/thrust@std_msgs/msg/Float64@gz.msgs.Double',
+            '/asv_boat/thrusters/right/thrust@std_msgs/msg/Float64@gz.msgs.Double'
         ],
         output='screen'
     )
@@ -53,11 +59,21 @@ def generate_launch_description():
         )
     )
 
-    # 4. Spawner & Game Manager & Autonomous Navigator
+    # 4. Spawner & Game Manager & Autonomous Navigator & Thrust Mixer
     spawner_node = Node(
         package='asv_exhibition',
         executable='obstacle_spawner.py',
         name='obstacle_spawner',
+        output='screen'
+    )
+
+    # Translates /cmd_vel (published unchanged by web_ui/app.js in all 3
+    # modes) into per-thruster force commands for the real physics below —
+    # keeps app.js and the ROS graph's public interface untouched.
+    thrust_mixer_node = Node(
+        package='asv_exhibition',
+        executable='cmd_vel_thrust_mixer.py',
+        name='cmd_vel_thrust_mixer',
         output='screen'
     )
 
@@ -83,5 +99,6 @@ def generate_launch_description():
         rosbridge_launch,
         spawner_node,
         game_manager_node,
-        navigator_node
+        navigator_node,
+        thrust_mixer_node
     ])

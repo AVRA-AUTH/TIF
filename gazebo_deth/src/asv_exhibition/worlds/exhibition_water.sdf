@@ -6,13 +6,12 @@
       <real_time_factor>1.0</real_time_factor>
     </physics>
 
-    <plugin filename="ignition-gazebo-physics-system" name="ignition::gazebo::systems::Physics"></plugin>
-    <plugin filename="ignition-gazebo-user-commands-system" name="ignition::gazebo::systems::UserCommands"></plugin>
-    <plugin filename="ignition-gazebo-scene-broadcaster-system" name="ignition::gazebo::systems::SceneBroadcaster"></plugin>
-    <plugin filename="ignition-gazebo-sensors-system" name="ignition::gazebo::systems::Sensors">
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"></plugin>
+    <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"></plugin>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"></plugin>
+    <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">
       <render_engine>ogre</render_engine>
     </plugin>
-
     <!-- Sun Light -->
     <light type="directional" name="sun">
       <cast_shadows>true</cast_shadows>
@@ -45,29 +44,43 @@
 
     <!-- ASV (Autonomous Surface Vehicle) Boat Model — WAM-V catamaran hull
          mesh reused from the open-source VRX project (Apache-2.0, see
-         models/VRX_LICENSE and models/NOTICE.md). Mass/inertia/hull spacing
-         values below are taken from VRX's own wamv_base.urdf.xacro so the
-         physics matches the real 16' WAM-V this mesh depicts. -->
+         models/VRX_LICENSE and models/NOTICE.md), rescaled to this boat's
+         actual size, 1.5m x 0.9m x 0.3m, rather than the real 180kg / 4.9m
+         WAM-V the mesh depicts natively. Mesh scale factors (0.306, 0.362,
+         0.198) map the real hull's length/beam/height to these dimensions.
+         Mass and inertia are the real, tested Mech-subsystem values from
+         this project's own MATLAB/MSS (Fossen) simulation model (L=1.4m,
+         B_total=0.9m — beam matches this hull exactly, confirming it's the
+         same boat), not a solid-box approximation: m=20kg (this SDF
+         previously used an earlier, rougher 30kg estimate),
+         Ix=5.2, Iy=8.4, Iz=9.1. -->
     <model name="asv_boat">
+      <!-- Dropped slightly above the settled draft computed for the Surface
+           plugin below (20kg boat, two 0.10m-radius demi-hulls) — physics
+           settles it onto the water in the first sim second rather than
+           needing an exact starting waterline. -->
       <pose>0 0 0.2 0 0 0</pose>
       <link name="base_link">
         <inertial>
-          <mass>180.0</mass>
+          <mass>20.0</mass>
           <pose>0 0 0 0 0 0</pose>
           <inertia>
-            <ixx>120.0</ixx>
+            <ixx>5.2</ixx>
             <ixy>0</ixy>
             <ixz>0</ixz>
-            <iyy>393.0</iyy>
+            <iyy>8.4</iyy>
             <iyz>0</iyz>
-            <izz>446.0</izz>
+            <izz>9.1</izz>
           </inertia>
         </inertial>
 
         <visual name="hull_visual">
           <pose>0 0 0 0 0 0</pose>
           <geometry>
-            <mesh><uri>model://WAM-V-Base/mesh/WAM-V-Base.dae</uri></mesh>
+            <mesh>
+              <uri>model://WAM-V-Base/mesh/WAM-V-Base.dae</uri>
+              <scale>0.306 0.362 0.198</scale>
+            </mesh>
           </geometry>
           <material>
             <pbr>
@@ -81,34 +94,26 @@
           </material>
         </visual>
 
-        <!-- Twin engines/propellers at the stern of each hull (hulls are
-             centered at y=+/-1.03m, per VRX's main_collisions macro) -->
+        <!-- Engine housings at the stern of each hull, positions scaled down
+             proportionally from the real WAM-V's layout. Static (don't
+             spin) — only the propellers below are separate links, since
+             those are what the Thruster plugin needs a real joint on. -->
         <visual name="engine_port_visual">
-          <pose>-2.2 1.03 0.2 0 0 0</pose>
-          <geometry><mesh><uri>model://engine/mesh/engine.dae</uri></mesh></geometry>
-        </visual>
-        <visual name="propeller_port_visual">
-          <pose>-2.4 1.03 0.0 0 0 0</pose>
-          <geometry><mesh><uri>model://propeller/mesh/propeller.dae</uri></mesh></geometry>
+          <pose>-0.67 0.38 0.04 0 0 0</pose>
+          <geometry><mesh><uri>model://engine/mesh/engine.dae</uri><scale>0.306 0.362 0.198</scale></mesh></geometry>
         </visual>
         <visual name="engine_stbd_visual">
-          <pose>-2.2 -1.03 0.2 0 0 0</pose>
-          <geometry><mesh><uri>model://engine/mesh/engine.dae</uri></mesh></geometry>
-        </visual>
-        <visual name="propeller_stbd_visual">
-          <pose>-2.4 -1.03 0.0 0 0 0</pose>
-          <geometry><mesh><uri>model://propeller/mesh/propeller.dae</uri></mesh></geometry>
+          <pose>-0.67 -0.38 0.04 0 0 0</pose>
+          <geometry><mesh><uri>model://engine/mesh/engine.dae</uri><scale>0.306 0.362 0.198</scale></mesh></geometry>
         </visual>
 
-        <!-- Simplified single-box collision sized to the real twin-hull
-             footprint (~4.9m x 2.46m) rather than replicating VRX's exact
-             multi-cylinder pontoon collision rig -->
+        <!-- Single collision box matching the hull's actual bounding box -->
         <collision name="hull_collision">
-          <geometry><box><size>4.9 2.46 0.5</size></box></geometry>
+          <geometry><box><size>1.5 0.9 0.3</size></box></geometry>
         </collision>
 
         <sensor name="gpu_lidar" type="gpu_lidar">
-          <pose>2.6 0 1.6 0 0 0</pose>
+          <pose>0.8 0 0.4 0 0 0</pose>
           <topic>/scan</topic>
           <update_rate>10</update_rate>
           <lidar>
@@ -131,14 +136,198 @@
         </sensor>
       </link>
 
-      <!-- Enable Velocity Control for /cmd_vel -->
-      <plugin filename="ignition-gazebo-velocity-control-system" name="ignition::gazebo::systems::VelocityControl">
-        <topic>/cmd_vel</topic>
+      <!-- Propellers as their own links on a continuous joint (axis = local
+           x, thrust direction), so the Thruster plugin below has a real
+           joint to apply force through — same pattern as VRX's own
+           wamv_description/urdf/thrusters/engine.xacro (engine_propeller_joint),
+           minus the steerable engine-mount joint that xacro also has, since
+           this boat only ever needs straight aft differential thrust. Mass/
+           inertia scaled down from that reference (0.5kg real propeller) by
+           this project's existing 30kg/180kg mass ratio. -->
+      <link name="propeller_port_link">
+        <pose>-0.74 0.38 0.0 0 0 0</pose>
+        <inertial>
+          <mass>0.08</mass>
+          <inertia><ixx>0.0015</ixx><iyy>0.0015</iyy><izz>0.0024</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+        </inertial>
+        <visual name="propeller_port_visual">
+          <geometry><mesh><uri>model://propeller/mesh/propeller.dae</uri><scale>0.306 0.362 0.198</scale></mesh></geometry>
+        </visual>
+      </link>
+      <!-- type="revolute" with unbounded limits, not type="continuous" —
+           SDF (unlike URDF) has no literal continuous joint type; this is
+           exactly how gz sdf -p converts VRX's own URDF continuous
+           propeller joint (confirmed by running that conversion). -->
+      <joint name="propeller_port_joint" type="revolute">
+        <parent>base_link</parent>
+        <child>propeller_port_link</child>
+        <axis>
+          <xyz>1 0 0</xyz>
+          <limit><lower>-inf</lower><upper>inf</upper><effort>100</effort><velocity>100</velocity></limit>
+          <dynamics><friction>0.05</friction><damping>0.05</damping></dynamics>
+        </axis>
+      </joint>
+
+      <link name="propeller_stbd_link">
+        <pose>-0.74 -0.38 0.0 0 0 0</pose>
+        <inertial>
+          <mass>0.08</mass>
+          <inertia><ixx>0.0015</ixx><iyy>0.0015</iyy><izz>0.0024</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+        </inertial>
+        <visual name="propeller_stbd_visual">
+          <geometry><mesh><uri>model://propeller/mesh/propeller.dae</uri><scale>0.306 0.362 0.198</scale></mesh></geometry>
+        </visual>
+      </link>
+      <joint name="propeller_stbd_joint" type="revolute">
+        <parent>base_link</parent>
+        <child>propeller_stbd_link</child>
+        <axis>
+          <xyz>1 0 0</xyz>
+          <limit><lower>-inf</lower><upper>inf</upper><effort>100</effort><velocity>100</velocity></limit>
+          <dynamics><friction>0.05</friction><damping>0.05</damping></dynamics>
+        </axis>
+      </joint>
+
+      <!-- Real buoyancy + hydrodynamic drag, via VRX's own vrx::Surface /
+           vrx::SimpleHydrodynamics plugins (see HANDOFF.md for why: proven
+           working in production on this exact Jazzy/gz-sim8 stack, unlike
+           core Gazebo's Buoyancy/Hydrodynamics which are unverified here).
+           One Surface instance per demi-hull; hull_length scaled down from
+           VRX's real-WAM-V xacro reference by this project's existing mesh
+           scale factor (0.306 length) — lands almost exactly on this boat's
+           actual 1.5m length, a good sanity check. hull_radius is NOT
+           simply mesh-scaled from VRX's 0.213: Surface models each hull as
+           a half-submerged cylinder (max force at hull_radius depth = half
+           the circle's cross-sectional area), so it must be sized from this
+           boat's actual 30kg weight, not the visual mesh. At 0.065m
+           (mesh-scaled) max buoyant force over both hulls was only ~195N —
+           less than the 294N (30kg*9.8) needed — so the boat sank
+           indefinitely (confirmed empirically: /odom fell to z=-15 in a
+           first Phase 5 test run). 0.10m gives ~462N max (294N needed),
+           settling to equilibrium at roughly 60-70% of that before the
+           clamp, not sinking through it. Still a starting point for further
+           empirical tuning (float height/stability), just no longer
+           physically incapable of floating. -->
+      <plugin filename="libSurface.so" name="vrx::Surface">
         <link_name>base_link</link_name>
+        <hull_length>1.5</hull_length>
+        <hull_radius>0.10</hull_radius>
+        <fluid_level>0</fluid_level>
+        <points>
+          <point>0.18 0.38 0</point>
+          <point>-0.43 0.38 0</point>
+        </points>
+      </plugin>
+      <plugin filename="libSurface.so" name="vrx::Surface">
+        <link_name>base_link</link_name>
+        <hull_length>1.5</hull_length>
+        <hull_radius>0.10</hull_radius>
+        <fluid_level>0</fluid_level>
+        <points>
+          <point>0.18 -0.38 0</point>
+          <point>-0.43 -0.38 0</point>
+        </points>
+      </plugin>
+
+      <!-- Drag + added-mass coefficients from a real, MSS-based (Fossen)
+           MATLAB model of an actual catamaran hull very close to this
+           boat's size (1.4m/20kg vs this boat's 1.5m/30kg — much closer
+           than VRX's 4.9m/180kg WAM-V used for the first pass at these
+           values, which turned out to be badly off: e.g. that scaling gave
+           xU=16.7 vs this real model's mass-scaled 1.05, ~16x too much
+           linear surge drag). Scaled by this boat's 30kg/20kg (1.5x) mass
+           ratio from the MATLAB model's vessel.Ma (added mass), vessel.D
+           (linear damping), vessel.Dn (quadratic damping) diagonals
+           ([surge,sway,heave,roll,pitch,yaw] order); Dn11 (quadratic surge)
+           there is itself derived from an ITTC-57 hull resistance
+           calculation, not a flat constant — recomputed here from that same
+           formula rather than guessed (V_max=2.57 m/s, L=1.4m, S0≈0.308m²
+           wetted area/hull → Dn11≈10.83 before scaling).
+           xDotU/yDotV/nDotR (added mass) are deliberately left at 0, NOT
+           mass-scaled from the MATLAB model like everything else here —
+           confirmed (by reading SimpleHydrodynamics.cc, and against this
+           project's own validated Simulink "Vessel" block architecture,
+           which sums M_RB and M_A and solves them together implicitly each
+           step) that this Gazebo plugin instead computes added mass as an
+           EXPLICIT force each tick, `-Ma * stateDot`, where stateDot is
+           Gazebo's own just-measured acceleration — not folded into an
+           implicit mass-matrix solve like the real MSS model does. That's
+           a feedback loop (this tick's force depends on last tick's
+           measured acceleration, which depended on the previous tick's
+           added-mass force), and populating it with the real, sizeable
+           Ma values is what turned the earlier capsize/dive instability
+           (Phase 5, xDotU=yDotV=nDotR=0) into an outright NaN/pose-
+           invalid crash once real values were plugged in — got worse, not
+           better, right when these were added. vrx::SimpleHydrodynamics
+           also has no roll/pitch/heave added-mass fields at all (only
+           surge/sway/yaw), so it can't carry Ma(3,3)/Ma(4,4)/Ma(5,5)
+           either way. -->
+      <plugin filename="libSimpleHydrodynamics.so" name="vrx::SimpleHydrodynamics">
+        <link_name>base_link</link_name>
+        <xDotU>0.0</xDotU>
+        <yDotV>0.0</yDotV>
+        <nDotR>0.0</nDotR>
+        <xU>1.05</xU>
+        <xUU>16.24</xUU>
+        <yV>22.5</yV>
+        <yVV>7.5</yVV>
+        <zW>30.0</zW>
+        <zWW>15.0</zWW>
+        <kP>7.5</kP>
+        <kPP>0.0</kPP>
+        <mQ>15.0</mQ>
+        <mQQ>0.0</mQQ>
+        <nR>12.0</nR>
+        <nRR>0.0</nRR>
+      </plugin>
+
+      <!-- Differential thrust, straight aft (no steering joint — this boat
+           only needs left/right differential thrust). max_thrust_cmd
+           recomputed for the real-hydrodynamics-model drag coefficients
+           above (a first pass used 500N/side sized against badly-off VRX-
+           scaled drag; those real coefficients are much lower, so the same
+           500N/side would settle well past 6 m/s — recomputed here instead
+           of left stale): xU*v + xUU*v^2 = 1.05*6 + 16.24*36 ≈ 591N total
+           at this boat's existing 6.0 m/s MAX_LINEAR_FWD target, ~300N/side.
+           thrust_coefficient/propeller_diameter/fluid_density copied from
+           VRX's own wamv_gazebo_thruster_config.xacro reference (diameter
+           scaled by the same 0.306 length factor); velocity_control=true
+           makes the topic take desired thrust directly in Newtons, same as
+           verified empirically against vrx_jazzy's own WAM-V in Phase 0.
+           <topic> deliberately has NO leading slash: this plugin always
+           prefixes it with the model name, but (confirmed empirically, via
+           -v 4 debug log's "Thruster listening to commands on [...]")
+           concatenates with no separator if the given topic already starts
+           with "/" — producing a malformed "asv_boatthrusters/left/thrust"
+           that nothing ever publishes to, silently discarding every thrust
+           command (this is exactly how a first Phase 5 test run went: real
+           buoyancy floating correctly, but zero forward motion under
+           sustained thrust). Omitting the leading slash resolves correctly
+           to "asv_boat/thrusters/left/thrust" — the actual topic the
+           launch file's ros_gz_bridge and cmd_vel_thrust_mixer.py target. -->
+      <plugin filename="gz-sim-thruster-system" name="gz::sim::systems::Thruster">
+        <joint_name>propeller_port_joint</joint_name>
+        <thrust_coefficient>0.004422</thrust_coefficient>
+        <fluid_density>1000</fluid_density>
+        <propeller_diameter>0.06</propeller_diameter>
+        <velocity_control>true</velocity_control>
+        <max_thrust_cmd>300</max_thrust_cmd>
+        <min_thrust_cmd>-180</min_thrust_cmd>
+        <topic>thrusters/left/thrust</topic>
+      </plugin>
+      <plugin filename="gz-sim-thruster-system" name="gz::sim::systems::Thruster">
+        <joint_name>propeller_stbd_joint</joint_name>
+        <thrust_coefficient>0.004422</thrust_coefficient>
+        <fluid_density>1000</fluid_density>
+        <propeller_diameter>0.06</propeller_diameter>
+        <velocity_control>true</velocity_control>
+        <max_thrust_cmd>300</max_thrust_cmd>
+        <min_thrust_cmd>-180</min_thrust_cmd>
+        <topic>thrusters/right/thrust</topic>
       </plugin>
 
       <!-- Publish Odometry to /odom -->
-      <plugin filename="ignition-gazebo-odometry-publisher-system" name="ignition::gazebo::systems::OdometryPublisher">
+      <plugin filename="gz-sim-odometry-publisher-system" name="gz::sim::systems::OdometryPublisher">
         <odom_topic>/odom</odom_topic>
         <odom_frame>odom</odom_frame>
         <robot_base_frame>base_link</robot_base_frame>

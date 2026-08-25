@@ -16,6 +16,7 @@ install(PROGRAMS
   scripts/obstacle_spawner.py
   scripts/game_manager.py
   scripts/asv_navigator.py
+  scripts/cmd_vel_thrust_mixer.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
