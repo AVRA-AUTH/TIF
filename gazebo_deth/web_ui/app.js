@@ -202,10 +202,22 @@ let entities = [];
 let plannedPath = [];
 let isNavigating = false;
 let pathIndex = 0;
+// ILOS guidance state (see ilosGuidance() below) — explicit since JS has no
+// equivalent of the MATLAB source's `persistent`. Reset at every "start a
+// fresh run" site (btn-run, startDynamicDocking, resetBoatToPose); k alone
+// (not y_int) also resets on Mode 1's periodic live replan — see the nav
+// loop for why.
+let ilosState = { k: 1, y_int: 0 };
 let obsCounter = 1;
 let currentGoal = null;
 let lastRecalcTime = 0;
 let threePathLine = null;
+// Mode 3's live-replan target — Mode 1's own replan re-targets `currentGoal`,
+// but docking's real transit destination is the align point computed once in
+// startDynamicDocking (local vars, not persisted anywhere else), so this
+// holds what a docking replan needs: {alignX, alignY, chosen}. Set there,
+// cleared whenever a docking run ends (goal reached, Reset, mode switch).
+let dockingTarget = null;
 
 function update3DPathLine() {
     if (threePathLine) {
@@ -1354,6 +1366,96 @@ function isSegmentBlocked(p1, p2, obstacles) {
     return false;
 }
 
+// ================= ILOS GUIDANCE (ported from the user's MATLAB ILOS_wrapper) =================
+// Integral Line-of-Sight: a real marine guidance law (Fossen-style), not an
+// ad-hoc heuristic — switches active path segment by along-track progress
+// vs R_SWITCH, computes cross-track error `e` off the active segment's line,
+// and folds a sigma-modified integral of `e` into the desired heading so
+// steady disturbances (current/drift, or here: wave bounce, hull-contact
+// backoffs, momentum overshoot) get rejected over time instead of just
+// producing a constant offset. This REPLACES the nav loop's old
+// point-to-point atan2(dy,dx) pursuit heading for transit legs only —
+// align/creep/docking maneuvers are untouched, see the nav loop wiring.
+//
+// Starting tuning, scaled down from the MATLAB reference's real-world values
+// (Delta=8, sigma=0.05, R_switch=2.0 at u_d0=1.0 m/s) for this sim's
+// WORLD_SCALE-compressed world and this boat's real thrust-derived top speed
+// (MAX_LINEAR_FWD=2.49 m/s, not 1.0) — same "port the algorithm exactly, then
+// retune the constants for this scale" treatment every other empirically-set
+// number in this file gets. sigma is a dimensionless ratio, left as-is.
+const ILOS_DELTA = 8.0 * WORLD_SCALE;     // lookahead distance (m) — smaller Delta = more aggressive heading correction
+const ILOS_SIGMA = 0.05;                  // anti-windup term on the integral (dimensionless)
+const ILOS_R_SWITCH = 2.0 * WORLD_SCALE;  // switch to the next segment once within this of the current one's end (m)
+
+// `state` is an explicit {k, y_int} object owned by the caller — JS has no
+// equivalent of MATLAB's `persistent`. `k` is 1-indexed (segment k runs from
+// waypoints[k-1] to waypoints[k] in this 0-indexed array), matching the
+// MATLAB source exactly except for that indexing translation. Reset state
+// when a fresh navigation run starts (see the nav-loop call sites) — NOT on
+// every live A* replan, so the integral's disturbance estimate survives a
+// replan even though `k` naturally restarts at segment 1 (the replanned path
+// always starts at the boat's current position).
+function ilosGuidance(x, y, waypoints, state, dt) {
+    const nWpt = waypoints.length;
+    let k = Math.min(Math.max(Math.round(state.k), 1), nWpt - 1);
+
+    while (true) {
+        const xk = waypoints[k - 1].x, yk = waypoints[k - 1].y;
+        const xk1 = waypoints[k].x, yk1 = waypoints[k].y;
+        const dx = xk1 - xk, dy = yk1 - yk;
+        const Lk = Math.hypot(dx, dy);
+        const alpha_k = Math.atan2(dy, dx);
+        const s = (x - xk) * Math.cos(alpha_k) + (y - yk) * Math.sin(alpha_k);
+        if (k < nWpt - 1 && (Lk - s) <= ILOS_R_SWITCH) {
+            k++;
+        } else {
+            break;
+        }
+    }
+    state.k = k;
+
+    const xk = waypoints[k - 1].x, yk = waypoints[k - 1].y;
+    const xk1 = waypoints[k].x, yk1 = waypoints[k].y;
+    const alpha_k = Math.atan2(yk1 - yk, xk1 - xk);
+    const e = -(x - xk) * Math.sin(alpha_k) + (y - yk) * Math.cos(alpha_k);
+
+    const y_int_dot = (ILOS_DELTA * e) / (Math.pow(e + ILOS_SIGMA * state.y_int, 2) + ILOS_DELTA * ILOS_DELTA);
+    state.y_int += dt * y_int_dot;
+
+    let psi_d = alpha_k - Math.atan((e + ILOS_SIGMA * state.y_int) / ILOS_DELTA);
+    psi_d = Math.atan2(Math.sin(psi_d), Math.cos(psi_d));
+
+    return { psi_d, e, seg: k };
+}
+
+// Lightweight local safety/correction check — not a full velocity-space DWA,
+// just a small fan of candidate headings sampled every tick (not just at the
+// 250ms A* replan), so a sudden obstacle or disturbance-induced drift gets
+// corrected immediately instead of waiting for the next global replan. Reuses
+// isPointBlocked() — the SAME predicate the pathfinder trusts — so "clear
+// according to this" can never disagree with "clear according to the plan."
+// Returns the safest heading near `preferredYaw`; a no-op when that heading
+// is already clear (checked first, so this matches ILOS/the planned heading
+// exactly in the common case).
+const DWA_HEADING_OFFSETS = [0, -0.2, 0.2, -0.4, 0.4]; // rad, preferred heading tried first
+const DWA_LOOKAHEAD_SEC = 1.5;
+function localCorrectedYaw(x, y, speed, preferredYaw, obstacles) {
+    const travel = Math.max(Math.abs(speed), 0.5) * DWA_LOOKAHEAD_SEC; // assume at least a slow crawl so this still looks ahead near a stop
+    for (const offset of DWA_HEADING_OFFSETS) {
+        const candidateYaw = preferredYaw + offset;
+        const endX = x + Math.cos(candidateYaw) * travel;
+        const endY = y + Math.sin(candidateYaw) * travel;
+        let clear = true;
+        const SAMPLES = 4;
+        for (let i = 1; i <= SAMPLES; i++) {
+            const t = i / SAMPLES;
+            if (isPointBlocked(x + (endX - x) * t, y + (endY - y) * t, obstacles)) { clear = false; break; }
+        }
+        if (clear) return candidateYaw;
+    }
+    return preferredYaw; // nothing clear in the fan — fall back to the hard obstacle backstop already in place
+}
+
 // Minimal binary min-heap for A*'s open set — the old BFS used a plain
 // array with .shift() as its queue, which is O(n) per pop (O(n^2) overall
 // on the ~140x140 cell grid) and was slow enough, re-run every 250ms during
@@ -1570,9 +1672,14 @@ function draw() {
     if (isNavigating && plannedPath.length > 0) {
         const now = Date.now();
         // Receding Horizon Sensor Scan: Recalculate path live every 250ms based on local 25m sensor horizon.
-        // Mode 3 docking runs its own fixed waypoint sequence (transit/align/creep) — this must NOT
-        // reroute it, or a currentGoal left over from a prior Mode 1 run silently replaces the docking
-        // path with an A* route back to that old goal, and the boat never reaches the berth.
+        // Mode 3 docking used to be fully excluded from this — its own
+        // dedicated branch below now gives it the same live replanning
+        // instead (see dockingTarget), but re-targeted at the docking's own
+        // align point, not currentGoal, and only while still on the transit
+        // leg. Mode 1's own currentGoal-based replan must still never touch
+        // a docking run, or a currentGoal left over from a prior Mode 1 run
+        // would silently replace the docking path with an A* route back to
+        // that old goal and the boat would never reach the berth.
         if (!isAutoDocking && now - lastRecalcTime > 250 && currentGoal) {
             lastRecalcTime = now;
             const sensedObstacles = entities.filter(ent => {
@@ -1589,42 +1696,135 @@ function draw() {
             if (newPath && newPath.length > 1) {
                 plannedPath = newPath;
                 pathIndex = 1; // Point directly to upcoming waypoint to prevent waypoint 0 snap
+                // Only the active-segment pointer resets — the replanned path
+                // always starts at the boat's current position, so segment 1
+                // is correct again immediately. y_int (the disturbance
+                // estimate) deliberately survives the replan; it's tracking
+                // a real physical effect, not progress along a specific path.
+                ilosState.k = 1;
+                update3DPathLine();
+            }
+        } else if (isAutoDocking && dockingTarget && now - lastRecalcTime > 250 &&
+                   plannedPath[pathIndex] &&
+                   (plannedPath[pathIndex].mode === 'transit' || plannedPath[pathIndex].mode === undefined)) {
+            // Docking's own live replan — same receding-horizon idea as Mode
+            // 1's above, but re-routes toward the docking's own align point
+            // (dockingTarget, saved by startDynamicDocking; docking never
+            // uses currentGoal) and only while the boat is still somewhere
+            // in the transit prefix. Once past that (align/creep), this
+            // stops firing entirely — those are hand-tuned precision
+            // maneuvers, not a line to replan around. This is what lets a
+            // real deviation (a hull-contact backoff, a disturbance the
+            // ILOS/local-correction steering couldn't fully absorb, physics
+            // knocking the boat off course) get a genuinely new route
+            // instead of the boat forever chasing a transit line planned
+            // from a position it's no longer anywhere near.
+            lastRecalcTime = now;
+            const sensedObstacles = entities.filter(ent => {
+                if (ent.type === 'goal' || ent.isCrashed) return false;
+                const dist = Math.hypot(ent.ros_x - boatPos.x, ent.ros_y - boatPos.y);
+                return dist <= 25.0;
+            });
+
+            const newTransit = findOptimalPath(
+                { x: boatPos.x, y: boatPos.y },
+                { x: dockingTarget.alignX, y: dockingTarget.alignY },
+                sensedObstacles
+            );
+            if (newTransit && newTransit.length > 1) {
+                const chosen = dockingTarget.chosen;
+                plannedPath = [
+                    ...newTransit.map(p => ({ x: p.x, y: p.y, mode: 'transit' })),
+                    { x: dockingTarget.alignX, y: dockingTarget.alignY, mode: 'align', targetYaw: chosen.parkedYaw },
+                    { x: chosen.ros_x, y: chosen.ros_y, mode: 'creep' }
+                ];
+                pathIndex = 1;
+                ilosState.k = 1; // same reasoning as Mode 1's replan above — y_int survives
                 update3DPathLine();
             }
         }
 
         if (pathIndex < plannedPath.length) {
-            const target = plannedPath[pathIndex];
-            const dx = target.x - boatPos.x;
-            const dy = target.y - boatPos.y;
-            const dist = Math.hypot(dx, dy);
+            // Which prefix of plannedPath is a continuous transit line
+            // (mode 'transit' or unset, i.e. the A*-planned lead-in) vs a
+            // discrete docking maneuver (align/creep/etc.) — recomputed
+            // each frame (cheap linear scan over a short array), not
+            // cached, since plannedPath can be replaced wholesale by the
+            // live 250ms replan at any time.
+            let transitEndIdx = -1;
+            for (let i = 0; i < plannedPath.length; i++) {
+                const m = plannedPath[i].mode;
+                if (m === 'transit' || m === undefined) transitEndIdx = i;
+                else break;
+            }
+            const inTransitPhase = transitEndIdx >= 1 && pathIndex <= transitEndIdx;
 
-            const targetYaw = (target.mode === 'align' && target.targetYaw !== undefined) ? target.targetYaw : Math.atan2(dy, dx);
+            let target, dx, dy, dist, targetYaw, nextTarget;
+            let advancePath = false;
+
+            if (inTransitPhase) {
+                // ILOS path-following (ilosGuidance(), ported from the
+                // user's MATLAB ILOS_wrapper) instead of naive
+                // point-to-point pursuit — tracks the actual planned LINE
+                // across the whole transit prefix in one continuous pass,
+                // with cross-track error + integral disturbance rejection,
+                // rather than re-aiming at a single dot every tick (the
+                // pursuit-curve divergence documented above).
+                const transitWaypoints = plannedPath.slice(0, transitEndIdx + 1);
+                const ilos = ilosGuidance(boatPos.x, boatPos.y, transitWaypoints, ilosState, navDt);
+                target = transitWaypoints[ilos.seg];
+                dx = target.x - boatPos.x;
+                dy = target.y - boatPos.y;
+                dist = Math.hypot(dx, dy);
+                nextTarget = transitWaypoints[ilos.seg + 1];
+
+                // Lightweight tick-rate local correction (DWA-style fan of
+                // candidate headings, localCorrectedYaw() above) layered
+                // under ILOS's heading — catches a fresh obstacle or
+                // disturbance-induced drift immediately instead of waiting
+                // for the next 250ms global replan. No-op when ILOS's own
+                // heading is already clear.
+                targetYaw = localCorrectedYaw(boatPos.x, boatPos.y, currentLinear, ilos.psi_d, entities);
+
+                // Same tolerances the old per-point advance used for a
+                // standard/docking transit leg — only checked against the
+                // FINAL transit waypoint now, since ILOS drives the whole
+                // prefix as one continuous leg rather than one waypoint at
+                // a time.
+                const finalLegTolerance = isAutoDocking ? 1.2 : 1.8;
+                if (ilos.seg >= transitWaypoints.length - 1 && dist < finalLegTolerance) {
+                    advancePath = true;
+                }
+            } else {
+                target = plannedPath[pathIndex];
+                dx = target.x - boatPos.x;
+                dy = target.y - boatPos.y;
+                dist = Math.hypot(dx, dy);
+                targetYaw = (target.mode === 'align' && target.targetYaw !== undefined) ? target.targetYaw : Math.atan2(dy, dx);
+                nextTarget = plannedPath[pathIndex + 1];
+
+                // State Machine Progression Logic
+                if (target.mode === 'align') {
+                    const yd = targetYaw - boatPos.yaw;
+                    const wrapped = Math.atan2(Math.sin(yd), Math.cos(yd));
+                    if (Math.abs(wrapped) < 0.05) advancePath = true; // Advance only when heading is locked!
+                } else if (target.mode === 'creep' || target.mode === 'reverse_swing') {
+                    if (dist < 0.3) advancePath = true; // High precision finish line
+                } else if (target.mode === 'approach') {
+                    if (dist < 0.5) advancePath = true; // Wait to reach near the pier
+                } else if (isAutoDocking) {
+                    if (dist < 1.2) advancePath = true;
+                } else {
+                    if (dist < 1.8) advancePath = true; // Standard transit tolerance
+                }
+            }
+
             let yawDiff = targetYaw - boatPos.yaw;
             while (yawDiff > Math.PI) yawDiff -= 2 * Math.PI;
             while (yawDiff < -Math.PI) yawDiff += 2 * Math.PI;
 
-            // State Machine Progression Logic
-            let advancePath = false;
-            if (target.mode === 'align') {
-                if (Math.abs(yawDiff) < 0.05) advancePath = true; // Advance only when heading is locked!
-            } else if (target.mode === 'creep' || target.mode === 'reverse_swing') {
-                if (dist < 0.3) advancePath = true; // High precision finish line
-            } else if (target.mode === 'approach') {
-                if (dist < 0.5) advancePath = true; // Wait to reach near the pier
-            } else if (isAutoDocking) {
-                // 1.2m, not the standard-transit 1.8m (docking is tighter quarters)
-                // but not 0.4m either — that was tight enough that a multi-leg A*
-                // route through the marina (several short, sharp-angled corners)
-                // could get stuck circling trying to nail an intermediate corner
-                // exactly, rather than just cutting the turn and moving on.
-                if (dist < 1.2) advancePath = true;
-            } else {
-                if (dist < 1.8) advancePath = true; // Standard transit tolerance
-            }
-
             if (advancePath) {
-                pathIndex++;
+                pathIndex = inTransitPhase ? transitEndIdx + 1 : pathIndex + 1;
             } else {
                 // Unified movement model: this drives Mode 1's auto-nav and Mode 3's
                 // docking with the SAME momentum/braking physics Mode 2 uses for manual
@@ -1710,22 +1910,33 @@ function draw() {
                 }
 
                 // Slow down ahead of a sharp UPCOMING turn, not just react to the
-                // CURRENT heading error above. An A*-planned route can string
-                // together several short, sharp-angled legs (e.g. threading
-                // between marina jetties) — approaching one at full cruise speed
-                // leaves only brakeDist ~= v^2/(2*brakeDecel) of room to slow down
-                // in, which a short leg doesn't have. Looking one waypoint ahead
-                // and easing cruiseSpeed down before the corner (not just at it)
-                // gives brakeDist time to shrink to match.
-                const nextTarget = plannedPath[pathIndex + 1];
+                // CURRENT heading error above, and cap it at what the boat can
+                // PHYSICALLY turn through — not an ad-hoc cosine guess. An
+                // A*-planned route can string together several short,
+                // sharp-angled legs (e.g. threading between marina jetties);
+                // approaching one at full cruise speed leaves only
+                // brakeDist ~= v^2/(2*brakeDecel) of room to slow down in,
+                // which a short leg doesn't have.
                 if (nextTarget && !pivotOnly) {
                     const legDx = target.x - boatPos.x, legDy = target.y - boatPos.y;
                     const nextDx = nextTarget.x - target.x, nextDy = nextTarget.y - target.y;
                     const legLen = Math.hypot(legDx, legDy), nextLen = Math.hypot(nextDx, nextDy);
                     if (legLen > 0.01 && nextLen > 0.01) {
                         const cosTurn = (legDx * nextDx + legDy * nextDy) / (legLen * nextLen); // 1 = straight, -1 = reversal
-                        const turnAheadFactor = Math.max(0.3, (cosTurn + 1) / 2);
-                        cruiseSpeed *= turnAheadFactor;
+                        const turnAngle = Math.acos(Math.max(-1, Math.min(1, cosTurn)));
+                        if (turnAngle > 0.01) {
+                            // Arc-length estimate: this leg is legLen long and
+                            // has to turn by turnAngle before/through the
+                            // corner, so its effective radius of curvature is
+                            // about legLen/turnAngle. MAX_ANGULAR (the boat's
+                            // real max turn rate) then bounds how fast it can
+                            // go around a corner that tight — cornerRadius *
+                            // MAX_ANGULAR is the fastest linear speed that
+                            // still keeps angular rate within the boat's limit.
+                            const cornerRadius = legLen / turnAngle;
+                            const kinematicMaxSpeed = cornerRadius * MAX_ANGULAR;
+                            cruiseSpeed = Math.min(cruiseSpeed, Math.max(kinematicMaxSpeed, MAX_LINEAR_FWD * 0.3));
+                        }
                     }
                 }
 
@@ -1815,6 +2026,7 @@ function draw() {
 
             if (isAutoDocking) {
                 isAutoDocking = false;
+                dockingTarget = null;
                 document.getElementById('tele-status').textContent = `🎉 DOCKED SAFELY: ${dockingBerthName}!`;
                 document.getElementById('tele-status').style.color = '#28a745';
             } else {
@@ -2336,6 +2548,8 @@ document.getElementById('btn-run').addEventListener('click', () => {
     // Start Smooth Execution
     isNavigating = true;
     pathIndex = 0;
+    ilosState = { k: 1, y_int: 0 };
+    update3DPathLine(); // draw the 3D route line immediately, not just once the first 250ms replan tick fires
 
     // Send Goal Pose to ROS
     const goalMsg = new ROSLIB.Message({
@@ -2362,7 +2576,9 @@ function resetBoatToPose(pose) {
     isAutoDocking = false;
     plannedPath = [];
     currentGoal = null;
+    dockingTarget = null;
     pathIndex = 0;
+    ilosState = { k: 1, y_int: 0 };
     currentLinear = 0.0;
     currentAngular = 0.0;
 
@@ -2560,6 +2776,8 @@ function startDynamicDocking(chosen) {
 
     plannedPath = dockWaypoints;
     pathIndex = 1;
+    ilosState = { k: 1, y_int: 0 };
+    dockingTarget = { alignX, alignY, chosen };
     update3DPathLine();
     isNavigating = true;
 }
