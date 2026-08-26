@@ -47,6 +47,10 @@ const availableBerths = [
 ];
 let activeBerthIdx = 1; // Default to Berth #2 Side Parking
 let entities = [];
+// Static marina scenery detection targets (pier/jetties, moored boats).
+// Separate from `entities`/`threeEntities`: those track things the player
+// can place or that move, while the marina is fixed scenery built once.
+const staticDetections = [];
 let plannedPath = [];
 let isNavigating = false;
 let isShipwrecked = false;
@@ -422,6 +426,7 @@ const pierMat = new THREE.MeshLambertMaterial({ color: 0x5d4037, roughness: 0.8 
 const mainPier = new THREE.Mesh(new THREE.BoxGeometry(130, 0.8, 6), pierMat);
 mainPier.position.set(-195, 0.4, 175);
 marinaGroup.add(mainPier);
+staticDetections.push({ detectionMeshes: [mainPier], label: 'Pier', hex: 0x5d4037 });
 
 // 3 Vertical Finger Jetties extending perpendicularly up into water (z = 175 down to z = 115)
 const jettiesX = [-245.0, -195.0, -145.0];
@@ -429,6 +434,7 @@ jettiesX.forEach(jx => {
     const jetty = new THREE.Mesh(new THREE.BoxGeometry(4, 0.8, 62), pierMat);
     jetty.position.set(jx, 0.4, 144);
     marinaGroup.add(jetty);
+    staticDetections.push({ detectionMeshes: [jetty], label: 'Pier', hex: 0x5d4037 });
 
     // Mooring Pylons along each finger jetty
     for (let pz = 115; pz <= 173; pz += 6.5) {
@@ -453,6 +459,10 @@ function createMooredBoat(x, z, hullColor, boatType = 'yacht') {
     hull.position.y = 0.2;
     bGroup.add(hull);
 
+    // Detection box hugs the hull (+ cabin, when present); the tall thin
+    // sailboat mast is excluded so it doesn't stretch the box unrealistically.
+    const detectionMeshes = [hull];
+
     if (isSailboat) {
         // Tall Sailboat Mast
         const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.07, 7.5, 8), new THREE.MeshStandardMaterial({ color: 0xdddddd }));
@@ -463,10 +473,12 @@ function createMooredBoat(x, z, hullColor, boatType = 'yacht') {
         const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.7, 1.05), new THREE.MeshStandardMaterial({ color: 0xffffff }));
         cabin.position.set(-0.2, 0.7, 0);
         bGroup.add(cabin);
+        detectionMeshes.push(cabin);
     }
 
     bGroup.position.set(x, 0.2, z);
     bGroup.rotation.y = 0; // Parked horizontally into berth
+    staticDetections.push({ detectionMeshes, label: 'Boat', hex: hullColor });
 
     // Register physical collision obstacle (isParkedShip avoids yellow buoy rings)
     entities.push({ id: 'moored_' + x + '_' + z, type: 'static', isParkedShip: true, ros_x: x, ros_y: -z });
@@ -670,6 +682,7 @@ function colorNameFromHex(hex) {
     else h = (r - g) / d + 4;
     h *= 60;
     if (h < 0) h += 360;
+    if (h < 50 && l < 0.4) return 'Brown'; // dark red/orange (e.g. wood) reads as brown, not red/orange
     if (h < 15 || h >= 345) return 'Red';
     if (h < 45) return 'Orange';
     if (h < 65) return 'Yellow';
@@ -683,7 +696,7 @@ const DETECTION_TYPE_INFO = {
     static: { label: 'Buoy', hex: 0xff8c00 },
     dynamic: { label: 'Boat', hex: 0x0f4c5c },
 };
-const MAX_DETECTION_DISTANCE = 60; // meters; farther objects don't get a box
+const MAX_DETECTION_DISTANCE = 90; // meters; farther objects don't get a box
 
 const detectionBox3 = new THREE.Box3();
 const detectionCenter = new THREE.Vector3();
@@ -698,10 +711,53 @@ function projectToOverlay(v) {
     };
 }
 
+function drawDetectionBox(coreMeshes, labelText) {
+    const ctx = detectionOverlayCtx;
+
+    detectionBox3.makeEmpty();
+    coreMeshes.forEach(m => detectionBox3.expandByObject(m));
+    if (detectionBox3.isEmpty()) return;
+
+    detectionBox3.getCenter(detectionCenter);
+    detectionToObject.copy(detectionCenter).sub(camera.position);
+    if (detectionToObject.dot(detectionForward) <= 0) return; // behind the camera
+    if (detectionToObject.length() > MAX_DETECTION_DISTANCE) return; // too far to plausibly detect
+
+    const { min, max } = detectionBox3;
+    const corners = [
+        [min.x, min.y, min.z], [min.x, min.y, max.z],
+        [min.x, max.y, min.z], [min.x, max.y, max.z],
+        [max.x, min.y, min.z], [max.x, min.y, max.z],
+        [max.x, max.y, min.z], [max.x, max.y, max.z],
+    ];
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    corners.forEach(([x, y, z]) => {
+        const p = projectToOverlay(new THREE.Vector3(x, y, z));
+        minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+        minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+    });
+
+    minX = Math.max(0, minX); minY = Math.max(0, minY);
+    maxX = Math.min(detectionOverlayCanvas.width, maxX);
+    maxY = Math.min(detectionOverlayCanvas.height, maxY);
+    if (maxX - minX < 4 || maxY - minY < 4) return; // offscreen or degenerate
+
+    ctx.strokeStyle = '#00ffcc';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(minX, minY, maxX - minX, maxY - minY);
+
+    ctx.font = '13px sans-serif';
+    const textWidth = ctx.measureText(labelText).width;
+    ctx.fillStyle = '#00ffcc';
+    ctx.fillRect(minX, minY - 18, textWidth + 8, 18);
+    ctx.fillStyle = '#001a14';
+    ctx.fillText(labelText, minX + 4, minY - 5);
+}
+
 function drawDetectionOverlay() {
     // Note: no clearRect here — the caller already refreshed the whole
     // canvas via drawImage(renderer.domElement, ...) just before this runs.
-    const ctx = detectionOverlayCtx;
     camera.getWorldDirection(detectionForward);
 
     entities.forEach(ent => {
@@ -709,47 +765,16 @@ function drawDetectionOverlay() {
         const mesh = threeEntities.get(ent.id);
         const info = DETECTION_TYPE_INFO[ent.type];
         if (!mesh || !info) return;
-
-        detectionBox3.makeEmpty();
-        (mesh.userData.detectionMeshes || [mesh]).forEach(m => detectionBox3.expandByObject(m));
-        if (detectionBox3.isEmpty()) return;
-
-        detectionBox3.getCenter(detectionCenter);
-        detectionToObject.copy(detectionCenter).sub(camera.position);
-        if (detectionToObject.dot(detectionForward) <= 0) return; // behind the camera
-        if (detectionToObject.length() > MAX_DETECTION_DISTANCE) return; // too far to plausibly detect
-
-        const { min, max } = detectionBox3;
-        const corners = [
-            [min.x, min.y, min.z], [min.x, min.y, max.z],
-            [min.x, max.y, min.z], [min.x, max.y, max.z],
-            [max.x, min.y, min.z], [max.x, min.y, max.z],
-            [max.x, max.y, min.z], [max.x, max.y, max.z],
-        ];
-
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        corners.forEach(([x, y, z]) => {
-            const p = projectToOverlay(new THREE.Vector3(x, y, z));
-            minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
-            minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
-        });
-
-        minX = Math.max(0, minX); minY = Math.max(0, minY);
-        maxX = Math.min(detectionOverlayCanvas.width, maxX);
-        maxY = Math.min(detectionOverlayCanvas.height, maxY);
-        if (maxX - minX < 4 || maxY - minY < 4) return; // offscreen or degenerate
-
         const label = `${colorNameFromHex(info.hex)} ${info.label}`;
-        ctx.strokeStyle = '#00ffcc';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(minX, minY, maxX - minX, maxY - minY);
+        drawDetectionBox(mesh.userData.detectionMeshes || [mesh], label);
+    });
 
-        ctx.font = '13px sans-serif';
-        const textWidth = ctx.measureText(label).width;
-        ctx.fillStyle = '#00ffcc';
-        ctx.fillRect(minX, minY - 18, textWidth + 8, 18);
-        ctx.fillStyle = '#001a14';
-        ctx.fillText(label, minX + 4, minY - 5);
+    // Static marina scenery (pier/jetties, moored boats) - not tracked in
+    // `entities` since they never move or get placed by the player, but
+    // they're real, known objects in the scene just like everything else.
+    staticDetections.forEach(target => {
+        const label = `${colorNameFromHex(target.hex)} ${target.label}`;
+        drawDetectionBox(target.detectionMeshes, label);
     });
 }
 
