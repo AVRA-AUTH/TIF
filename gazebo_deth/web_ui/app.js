@@ -352,6 +352,66 @@ function isHeadingTowardMarina(direction) {
     return distanceToMarinaStructure(stepX, stepY) < d0;
 }
 
+// Signed distance from (x,y) to an axis-aligned box: positive outside
+// (ordinary distance to the nearest boundary point), NEGATIVE once inside
+// (magnitude = depth to the nearest edge — how far a straight shot to the
+// closest exit would have to travel). distanceToMarinaStructure() above
+// clamps this at 0 once inside, which is fine for a speed cap (0 just means
+// "fully braked") but throws away exactly the information needed below to
+// tell "still driving deeper into the pier" from "already inside, now
+// heading back out" — hence a separate function instead of reusing that one.
+function boxSDF(x, y, xmin, xmax, ymin, ymax) {
+    const cx = (xmin + xmax) / 2, cy = (ymin + ymax) / 2;
+    const hx = (xmax - xmin) / 2, hy = (ymax - ymin) / 2;
+    const qx = Math.abs(x - cx) - hx, qy = Math.abs(y - cy) - hy;
+    const outside = Math.hypot(Math.max(qx, 0), Math.max(qy, 0));
+    const inside = Math.min(Math.max(qx, qy), 0);
+    return outside + inside;
+}
+
+// Same idea as distanceToMarinaStructure(), but signed (see boxSDF above).
+// The pier's real collision rule is a half-plane (y <= MARINA_PIER_Y, no
+// southern bound — nothing is ever that far south in practice), modeled
+// here as a very deep box so boxSDF degenerates to the same half-plane
+// behavior near the actual playing field.
+function marinaPenetrationSDF(x, y) {
+    let best = boxSDF(x, y, MARINA_PIER_X_MIN, MARINA_PIER_X_MAX, -LAKE_RADIUS - 50, MARINA_PIER_Y);
+    for (const jx of JETTY_X_LIST) {
+        best = Math.min(best, boxSDF(x, y, jx - JETTY_HALF_WIDTH, jx + JETTY_HALF_WIDTH, JETTY_Y_FAR, JETTY_Y_NEAR));
+    }
+    return best;
+}
+
+// Is `direction` (+1 forward, -1 reverse) making penetration into the
+// marina structure WORSE? Unlike isMovingIntoObstacle()'s generic
+// step-and-recheck-boolean test below (which has to fall back to "block
+// neither" when both directions still read as touching after a small step —
+// unavoidable for a long flat wall, where a 0.5m step parallel to the face
+// doesn't cross out of the collision box either way, an ambiguity a
+// circular obstacle like the island rarely hits), this compares the actual
+// signed penetration depth before and after the step. That gradient stays
+// meaningful even deep inside the pier/jetty box, which is what actually
+// closes the bug this was written for: a boat driving straight at the pier
+// could end up in that generic "both directions still touching, so allow
+// both" case and sail right through.
+//
+// Gated on isTouchingObstacle() — the SAME real hull-inclusive contact test
+// the generic check above uses — on purpose: this must never fire before
+// the hull has actually made contact. An earlier version short-circuited on
+// raw distance ("skip if > 5m away") instead, which meant it started
+// throttling approach a full 5m out regardless of whether the hull was
+// anywhere near touching — directly broke "should be able to get really
+// close to dock." This is a backstop for genuine contact only, not a
+// pre-emptive keep-out; it just fills the one gap the generic ambiguous-case
+// fallback leaves on a long flat wall.
+function isMovingDeeperIntoMarina(direction) {
+    if (!isTouchingObstacle()) return false;
+    const sdf0 = marinaPenetrationSDF(boatPos.x, boatPos.y);
+    const stepX = boatPos.x + direction * Math.cos(boatPos.yaw) * 0.5;
+    const stepY = boatPos.y + direction * Math.sin(boatPos.yaw) * 0.5;
+    return marinaPenetrationSDF(stepX, stepY) < sdf0 - 0.01; // meaningfully worse, not float noise
+}
+
 // Combines all three graduated boundaries (island keep-out, shoreline, and
 // the marina dock structure) into one speed ceiling for `direction`: only
 // the boundary(ies) that direction is actually closing in on contribute a
@@ -464,17 +524,25 @@ function isTouchingObstacle() {
 // axis-aligned box and a small step parallel to the wall doesn't cross out
 // of it either way. Blocking both in that case would strand the boat
 // needing a manual Reset — worse than the bug this is fixing — so when
-// both directions look blocked, treat it as ambiguous and block neither.
+// both directions look blocked, treat it as ambiguous and block neither
+// from THIS generic test. That ambiguity is rare for the circular island
+// but common for the marina's long straight walls — a boat driving straight
+// at the pier could land in exactly that "both sides still touching" case
+// and sail right through it. isMovingDeeperIntoMarina() (above) closes that
+// gap with a penetration-depth gradient instead of a boolean, so it's OR'd
+// in independently rather than folded into the ambiguity fallback above.
 function isMovingIntoObstacle(direction) {
-    if (!isTouchingObstacle()) return false;
-    const stepX = boatPos.x + direction * Math.cos(boatPos.yaw) * 0.5;
-    const stepY = boatPos.y + direction * Math.sin(boatPos.yaw) * 0.5;
-    const oppStepX = boatPos.x - direction * Math.cos(boatPos.yaw) * 0.5;
-    const oppStepY = boatPos.y - direction * Math.sin(boatPos.yaw) * 0.5;
-    const thisBlocked = isTouchingObstacleAt(stepX, stepY, boatPos.yaw);
-    const oppBlocked = isTouchingObstacleAt(oppStepX, oppStepY, boatPos.yaw);
-    if (thisBlocked && oppBlocked) return false;
-    return thisBlocked;
+    let genericBlocked = false;
+    if (isTouchingObstacle()) {
+        const stepX = boatPos.x + direction * Math.cos(boatPos.yaw) * 0.5;
+        const stepY = boatPos.y + direction * Math.sin(boatPos.yaw) * 0.5;
+        const oppStepX = boatPos.x - direction * Math.cos(boatPos.yaw) * 0.5;
+        const oppStepY = boatPos.y - direction * Math.sin(boatPos.yaw) * 0.5;
+        const thisBlocked = isTouchingObstacleAt(stepX, stepY, boatPos.yaw);
+        const oppBlocked = isTouchingObstacleAt(oppStepX, oppStepY, boatPos.yaw);
+        genericBlocked = !(thisBlocked && oppBlocked) && thisBlocked;
+    }
+    return genericBlocked || isMovingDeeperIntoMarina(direction);
 }
 
 // Listen to boat Odometry — the sole source of boatPos, unconditionally, in
