@@ -1,0 +1,85 @@
+// ================= ROS CONNECTION, TOPICS, ODOM =================
+// Depends on config.js (topic names use no config, but odom subscription
+// updates boatPos/DOF panel from state.js/dof-panel.js — load after both).
+
+// Connect to ROS via roslibjs
+const ros = new ROSLIB.Ros({
+    url: 'ws://localhost:9090'
+});
+
+const statusEl = document.getElementById('status');
+
+ros.on('connection', function () {
+    statusEl.textContent = 'Connected to ROS';
+    statusEl.className = 'connected';
+});
+
+ros.on('error', function () {
+    statusEl.textContent = 'Connection Error';
+    statusEl.className = 'disconnected';
+});
+
+ros.on('close', function () {
+    statusEl.textContent = 'Disconnected';
+    statusEl.className = 'disconnected';
+});
+
+// ROS Topics
+const spawnTopic = new ROSLIB.Topic({ ros: ros, name: '/exhibition/spawn_obstacle', messageType: 'std_msgs/String' });
+const cmdVelTopic = new ROSLIB.Topic({ ros: ros, name: '/cmd_vel', messageType: 'geometry_msgs/Twist' });
+const odomTopic = new ROSLIB.Topic({ ros: ros, name: '/odom', messageType: 'nav_msgs/Odometry' });
+const goalTopic = new ROSLIB.Topic({ ros: ros, name: '/goal_pose', messageType: 'geometry_msgs/PoseStamped' });
+// Raw per-thruster topics — same ones cmd_vel_thrust_mixer.py publishes to,
+// but written directly from the browser for independent thruster control
+// (W/A/R/D below), bypassing /cmd_vel and the mixer entirely.
+const leftThrustTopic = new ROSLIB.Topic({ ros: ros, name: '/asv_boat/thrusters/left/thrust', messageType: 'std_msgs/Float64' });
+const rightThrustTopic = new ROSLIB.Topic({ ros: ros, name: '/asv_boat/thrusters/right/thrust', messageType: 'std_msgs/Float64' });
+// Listen to boat Odometry — the sole source of boatPos, unconditionally, in
+// every mode. This used to be gated to "only while Mode 2 or actively
+// navigating" as a minor perf shortcut, but that let boatPos sit frozen on a
+// stale/cosmetic value (e.g. right after a reset) while the REAL simulated
+// boat was somewhere else entirely (still settling at its old spot, or
+// mid-collision) — invisible until the next nav run suddenly synced to the
+// true position out from under it. Collision detection below now also runs
+// in every mode, so it needs boatPos to be live at all times, not just
+// during Mode 2 or an active nav/dock run.
+odomTopic.subscribe((msg) => {
+    // Drop odom updates for a short window right after resetBoatToPose() —
+    // it snaps boatPos locally AND fires an async 'set_pose' to the Gazebo
+    // backend, but that physics teleport takes real time to land. Without
+    // this guard, an /odom message reporting the boat's OLD (pre-reset)
+    // pose could arrive first and clobber the reset right back, before the
+    // teleport actually completes — a race that only sometimes loses,
+    // which is why it looked like "the right spot, then the wrong one" on
+    // different clicks instead of failing consistently.
+    if (Date.now() < ignoreOdomUntil) return;
+
+    // twist is in the child_frame (base_link, body frame) per this odometry
+    // plugin's config (robot_base_frame: base_link) — linear.x is signed
+    // surge speed (forward positive, reverse negative) directly, not a
+    // magnitude. Using sqrt(x^2+y^2) here used to erase the sign, making
+    // reverse motion indistinguishable from forward on the telemetry panel.
+    boatPos.x = msg.pose.pose.position.x;
+    boatPos.y = msg.pose.pose.position.y;
+    boatPos.speed = msg.twist.twist.linear.x;
+    const q = msg.pose.pose.orientation;
+    boatPos.yaw = Math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z));
+
+    // DOF panel: yaw rate is twist.angular.z (body frame, already signed).
+    // Updates whenever boatPos itself is being synced (all modes now),
+    // matching the panel's visibility (Part B).
+    const yawRate = msg.twist.twist.angular.z;
+    updateDofPanel(boatPos.speed, yawRate);
+});
+function sendCmdVel(linear, angular) {
+    const twist = new ROSLIB.Message({
+        linear: { x: linear, y: 0.0, z: 0.0 },
+        angular: { x: 0.0, y: 0.0, z: angular }
+    });
+    cmdVelTopic.publish(twist);
+}
+
+function publishThrust(topic, value) {
+    topic.publish(new ROSLIB.Message({ data: value }));
+}
+

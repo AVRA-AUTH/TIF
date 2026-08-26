@@ -110,7 +110,31 @@
         </div>
     </div>
 
-    <script src="app.js"></script>
+    <!-- Split from the original single app.js into ordered, classic (non-module)
+         scripts — ES modules would break "double-click index.html to open it"
+         (see README), since browsers block module fetches over file://. Load
+         order matters: each file may use anything defined by an earlier one,
+         both at its own top level (e.g. scene meshes built immediately from
+         config.js constants) and inside functions (called later, once
+         everything below has finished loading). -->
+    <script src="js/config.js"></script>
+    <script src="js/state.js"></script>
+    <script src="js/dof-panel.js"></script>
+    <script src="js/ros.js"></script>
+    <script src="js/boundaries.js"></script>
+    <script src="js/pathfinding.js"></script>
+    <script src="js/guidance.js"></script>
+    <script src="js/scene-environment.js"></script>
+    <script src="js/scene-marina.js"></script>
+    <script src="js/scene-boat.js"></script>
+    <script src="js/entities-3d.js"></script>
+    <script src="js/render-2d.js"></script>
+    <script src="js/navigation.js"></script>
+    <script src="js/docking.js"></script>
+    <script src="js/lifecycle.js"></script>
+    <script src="js/utils.js"></script>
+    <script src="js/input.js"></script>
+    <script src="js/main.js"></script>
 </body>
 
 </html>
