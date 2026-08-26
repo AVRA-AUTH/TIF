@@ -271,6 +271,61 @@ function maxSpeedNearIsland() {
     return Math.sqrt(2 * ISLAND_BRAKE_DECEL * clearance);
 }
 
+// Same graduated-braking idea, applied to the shoreline (isExitingLake below
+// only ever gave the shore a hard, zero-standoff cutoff — the "lets the boat
+// go into the island" bug, just for the beach instead of the island, since it
+// was never given the same fix). Distance is measured from the world origin
+// since the lake is centered there, same as the island — the "clearance" is
+// just measured the other way round (room before crossing OUT past
+// LAKE_RADIUS, not room before crossing IN past ISLAND_KEEP_OUT).
+function maxSpeedNearShore() {
+    const distFromCenter = Math.hypot(boatPos.x, boatPos.y);
+    const clearance = (LAKE_RADIUS - 0.5) - distFromCenter;
+    if (clearance <= 0) return 0;
+    return Math.sqrt(2 * ISLAND_BRAKE_DECEL * clearance);
+}
+
+// Direction-aware companion to maxSpeedNearShore(), same reasoning as
+// isHeadingTowardIsland() above: only cap whichever direction is actually
+// increasing distance from center (heading toward/through the shore),
+// never the direction that's heading back toward open water, so braking to
+// a stop at the shore can never also block getting away from it.
+function isHeadingTowardShore(direction) {
+    const dist = Math.hypot(boatPos.x, boatPos.y);
+    if (dist < 0.01) return false; // at the world center — nowhere near the shore either way
+    const moveX = direction * Math.cos(boatPos.yaw), moveY = direction * Math.sin(boatPos.yaw);
+    return (moveX * boatPos.x + moveY * boatPos.y) > 0; // positive dot with the outward radial vector = heading out
+}
+
+// Is commanding `direction` (+1 forward, -1 reverse) actually heading INTO
+// the island (shrinking distance to it), or away/tangential? maxSpeedNearIsland()
+// on its own is a pure distance cap with no direction awareness — applied
+// to both forward and reverse unconditionally, it caps whichever way you're
+// currently facing equally, including the escape direction. Right at the
+// boundary (clearance ~0, cap ~0) that meant BOTH directions got clamped to
+// 0 at once — genuinely stuck, unable to leave. This lets each call site
+// only cap the direction that's actually closing the distance, leaving the
+// other direction completely free to always be able to back away.
+function isHeadingTowardIsland(direction) {
+    const dx = boatPos.x - ISLAND_X, dy = boatPos.y - ISLAND_Y;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 0.01) return true; // degenerate (on top of the island center) — treat as "in"
+    const moveX = direction * Math.cos(boatPos.yaw), moveY = direction * Math.sin(boatPos.yaw);
+    return (moveX * dx + moveY * dy) < 0; // negative dot with the outward radial vector = closing in
+}
+
+// Combines both graduated boundaries (island keep-out AND shoreline) into
+// one speed ceiling for `direction`: only the boundary(ies) that direction
+// is actually closing in on contribute a cap, so the escape direction away
+// from either one is always left at rawMax. Returns a magnitude (always
+// >= 0); the caller applies the sign.
+function boundaryCappedSpeed(direction, rawMax) {
+    let cap = rawMax;
+    if (isHeadingTowardIsland(direction)) cap = Math.min(cap, maxSpeedNearIsland());
+    if (isHeadingTowardShore(direction)) cap = Math.min(cap, maxSpeedNearShore());
+    return cap;
+}
+
 // Shoreline boundary check — direction-aware, unlike isTouchingObstacle()
 // below. A plain "blocked outside LAKE_RADIUS" flag (like the island's)
 // would also have to block reverse to stop the boat backing out stern-first,
@@ -2532,13 +2587,16 @@ function thrusterLoop() {
         // never both publish to the same thrust topics in the same frame.
         // Instant on/off, no ramp — real Gazebo physics does all the
         // shaping, same principle as the combined drive's instant-cutoff
-        // fix below. Both directions are scaled by the same island braking
-        // curve the combined drive uses — 1.0 (no effect) out at open sea,
-        // shrinking smoothly toward 0 only inside the island's braking
-        // zone, whichever direction (forward OR reverse) is being commanded.
-        const islandSpeedCap = maxSpeedNearIsland();
-        const fwdThrustScale = Math.max(0, Math.min(1, islandSpeedCap / MAX_LINEAR_FWD));
-        const revThrustScale = Math.max(0, Math.min(1, islandSpeedCap / Math.abs(MAX_LINEAR_REV)));
+        // fix below. Both directions are scaled by the same graduated
+        // braking curve the combined drive uses (island keep-out AND
+        // shoreline, via boundaryCappedSpeed) — 1.0 (no effect) out at open
+        // sea, shrinking smoothly toward 0 only inside a boundary's braking
+        // zone, and ONLY for whichever direction is actually heading toward
+        // that boundary — the escape direction is always left at full
+        // strength, so getting braked to a stop never also blocks getting
+        // away.
+        const fwdThrustScale = Math.max(0, Math.min(1, boundaryCappedSpeed(1, MAX_LINEAR_FWD) / MAX_LINEAR_FWD));
+        const revThrustScale = Math.max(0, Math.min(1, boundaryCappedSpeed(-1, Math.abs(MAX_LINEAR_REV)) / Math.abs(MAX_LINEAR_REV)));
         let leftThrust = heldThrusterKeys.has('leftFwd') ? THRUSTER_MAX_FWD_N * fwdThrustScale
             : heldThrusterKeys.has('leftRev') ? THRUSTER_MIN_REV_N * revThrustScale : 0.0;
         let rightThrust = heldThrusterKeys.has('rightFwd') ? THRUSTER_MAX_FWD_N * fwdThrustScale
@@ -2599,14 +2657,15 @@ function thrusterLoop() {
         // FWD/REV demand ceilings are now real hardware-derived equilibrium
         // speeds (see MAX_LINEAR_FWD/MAX_LINEAR_REV above), not arbitrary
         // software targets — no reason left to uncap these for experiments,
-        // real physics and the JS ceiling should now roughly agree. Both
-        // directions are additionally capped by maxSpeedNearIsland() — a
-        // no-op out at open sea, it only bites within the island's braking
-        // zone, whichever direction (forward OR reverse) is being commanded
-        // (a boat backing toward the island stern-first needs this just as
-        // much as one approaching bow-first).
-        const targetLinear = heldAxes.has('fwd') ? Math.min(MAX_LINEAR_FWD, maxSpeedNearIsland())
-            : heldAxes.has('rev') ? Math.max(MAX_LINEAR_REV, -maxSpeedNearIsland()) : 0.0;
+        // real physics and the JS ceiling should now roughly agree. Whichever
+        // direction is actually heading toward a boundary (island keep-out OR
+        // shoreline, via boundaryCappedSpeed) gets graduated braking — a no-op
+        // out at open sea, it only bites within a boundary's braking zone. The
+        // OTHER direction (the escape route) is left uncapped, so braking to a
+        // stop near either boundary never also blocks getting away from it.
+        const targetLinear = heldAxes.has('fwd') ? boundaryCappedSpeed(1, MAX_LINEAR_FWD)
+            : heldAxes.has('rev') ? -boundaryCappedSpeed(-1, Math.abs(MAX_LINEAR_REV))
+                : 0.0;
         // EXPERIMENT (still active): turn demand uncapped (was MAX_ANGULAR =
         // 1.2) — same "let real physics decide" test already run on forward
         // speed. Once demand exceeds the thruster caps, one side saturates
