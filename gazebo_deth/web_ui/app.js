@@ -47,7 +47,7 @@ const availableBerths = [
 ];
 let activeBerthIdx = 1; // Default to Berth #2 Side Parking
 let entities = [];
-// Static marina scenery detection targets (pier/jetties, moored boats).
+// Static marina scenery detection targets (moored boats).
 // Separate from `entities`/`threeEntities`: those track things the player
 // can place or that move, while the marina is fixed scenery built once.
 const staticDetections = [];
@@ -426,7 +426,6 @@ const pierMat = new THREE.MeshLambertMaterial({ color: 0x5d4037, roughness: 0.8 
 const mainPier = new THREE.Mesh(new THREE.BoxGeometry(130, 0.8, 6), pierMat);
 mainPier.position.set(-195, 0.4, 175);
 marinaGroup.add(mainPier);
-staticDetections.push({ detectionMeshes: [mainPier], label: 'Pier', hex: 0x5d4037 });
 
 // 3 Vertical Finger Jetties extending perpendicularly up into water (z = 175 down to z = 115)
 const jettiesX = [-245.0, -195.0, -145.0];
@@ -434,7 +433,6 @@ jettiesX.forEach(jx => {
     const jetty = new THREE.Mesh(new THREE.BoxGeometry(4, 0.8, 62), pierMat);
     jetty.position.set(jx, 0.4, 144);
     marinaGroup.add(jetty);
-    staticDetections.push({ detectionMeshes: [jetty], label: 'Pier', hex: 0x5d4037 });
 
     // Mooring Pylons along each finger jetty
     for (let pz = 115; pz <= 173; pz += 6.5) {
@@ -769,9 +767,9 @@ function drawDetectionOverlay() {
         drawDetectionBox(mesh.userData.detectionMeshes || [mesh], label);
     });
 
-    // Static marina scenery (pier/jetties, moored boats) - not tracked in
-    // `entities` since they never move or get placed by the player, but
-    // they're real, known objects in the scene just like everything else.
+    // Static marina scenery (moored boats) - not tracked in `entities`
+    // since they never move or get placed by the player, but they're real,
+    // known objects in the scene just like everything else.
     staticDetections.forEach(target => {
         const label = `${colorNameFromHex(target.hex)} ${target.label}`;
         drawDetectionBox(target.detectionMeshes, label);
