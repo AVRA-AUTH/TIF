@@ -38,21 +38,41 @@ const DOCK_CREEP_SPEED_RATIO = 1.3 / 6.0;           // ~0.217
 const DOCK_BRAKE_DECEL = 0.3 * (MAX_LINEAR_FWD / 6.0); // ~0.1245 m/s^2
 
 // Mode 3's "logical place for docking": the open-water fairway mouth just
-// outside the marina's keep-out disk (MARINA_X/Y/RADIUS, defined below) that
-// every docking run funnels through before entering a specific berth. Also
-// where Reset parks the boat, so a fresh session already starts here.
+// outside the marina's dock structure that every docking run funnels
+// through before entering a specific berth. Also where Reset parks the
+// boat, so a fresh session already starts here.
 const DOCK_ENTRANCE_X = -220.0 * WORLD_SCALE;
 const DOCK_ENTRANCE_Y = -95.0 * WORLD_SCALE;
 
 // Each mode's own starting pose — switching to a mode (even switching BACK to
 // one you were already in) always snaps the boat here, via resetBoatToPose()
 // in the mode-switch handlers below, so a session never carries over state
-// from whatever you were doing a moment ago. All three default to the one
-// pose already vetted clear of the island/marina/obstacles; retune any one
-// independently if a given mode should start somewhere else.
-const MODE1_START = { x: DOCK_ENTRANCE_X, y: DOCK_ENTRANCE_Y, yaw: -1.57 };
-const MODE2_START = { x: DOCK_ENTRANCE_X, y: DOCK_ENTRANCE_Y, yaw: -1.57 };
-const MODE3_START = { x: DOCK_ENTRANCE_X, y: DOCK_ENTRANCE_Y, yaw: -1.57 };
+// from whatever you were doing a moment ago.
+//
+// Coordinates are hardcoded numerically (not via the ISLAND_*/city constants
+// below) since those aren't defined until later in the file and these are
+// evaluated immediately, top-to-bottom, at load.
+const MODE1_START = {
+    // Mode 1 (Level Designer & Auto Nav): open water just off the Coastal
+    // City, which is drawn at ROS (230, 230) — that point itself is dry land
+    // well outside LAKE_RADIUS (140) and the pathfinding grid, so this is the
+    // nearest navigable water along the same bearing (radius 110, 45°),
+    // ~30m in from the shoreline. Yaw faces back out toward open water/the
+    // lake center (bearing 225°), away from the coast.
+    x: 77.8, y: 77.8, yaw: -2.356
+};
+const MODE2_START = {
+    // Mode 2 (Joystick Drive): open water just outside the island's keep-out
+    // ring (ISLAND_KEEP_OUT = ISLAND_RADIUS(25) + 8 = 33), due east of it
+    // with a small safety margin so it doesn't spawn already touching the
+    // new friction boundary. Yaw faces away from the island.
+    x: 38.0, y: 0.0, yaw: 0.0
+};
+const MODE3_START = {
+    // Mode 3 (Autonomous Docking): unchanged — the marina's Harbor Fairway
+    // Entrance, same as Reset.
+    x: DOCK_ENTRANCE_X, y: DOCK_ENTRANCE_Y, yaw: -1.57
+};
 
 // Connect to ROS via roslibjs
 const ros = new ROSLIB.Ros({
@@ -568,11 +588,6 @@ const ISLAND_Y = 0.0;
 const ISLAND_RADIUS = 25.0;
 const ISLAND_KEEP_OUT = ISLAND_RADIUS + 8.0; // 33.0m keep-out buffer (Guaranteed clearance, NO island crashes!)
 
-// Core Structure Obstacle: Marina Dock & Pier at Bottom-Left (x: -215m, y: -165m, radius: 25m)
-const MARINA_X = -215.0 * WORLD_SCALE;
-const MARINA_Y = -165.0 * WORLD_SCALE;
-const MARINA_RADIUS = 25.0;
-
 const islandGroup = new THREE.Group();
 const islandTerrainGeo = new THREE.CylinderGeometry(22, 26, 2, 32);
 const islandTerrainMat = new THREE.MeshLambertMaterial({ color: 0x3a6024 }); // Grass
@@ -983,58 +998,111 @@ function sync3DEntities() {
     });
 }
 
-// ================= ULTIMATE GRID BFS + STRING-PULLING PATHFINDER ================= //
-const SAFETY_RADIUS = 5.5; // Restrictive imaginary keep-out radius for buoys (meters)
+// ================= UNIFIED A* + STRING-PULLING PATHFINDER ================= //
+const SAFETY_RADIUS = 5.5; // Restrictive imaginary keep-out radius for buoys/boats (meters)
+const SHORE_MARGIN = 4.0;  // Keep-out band inside LAKE_RADIUS, off-limits to route planning (beach/greenery)
+
+// Real marina dock structure (main spine pier + 3 finger jetties). This is
+// the single source of truth for "is this point solid dock" — used by BOTH
+// the direct-line fast path AND the grid search below, so the two can never
+// disagree about whether a given spot is water or structure (they used to:
+// one checked this exact rectangular shape, the other blocked a plain circle
+// of a different, unit-mismatched size around the marina's center).
+function isInsideMarinaStructure(x, y) {
+    // Main Spine Pier Wall (solid deck, y <= -173.0 between x = -265 and -125)
+    if (y <= -173.0 * WORLD_SCALE && x >= -265.0 * WORLD_SCALE && x <= -125.0 * WORLD_SCALE) return true;
+    // 3 Finger Jetties (2.5m clearance around each jetty centerline, y = -115 to -175)
+    // 5.5m half-width, not the jetty's own 2.0m — path planning treats the
+    // boat as a point, but isTouchingObstacle()'s real hull-collision check
+    // below adds the boat's actual footprint (up to ~2.9m half-extent when
+    // diagonal to the jetty, e.g. mid-turn) on top of the jetty's physical
+    // width. A planned route that only kept a point 2.5m off the centerline
+    // left the real hull enough to clip the jetty while turning even though
+    // the plan itself was "clear" — this matches SAFETY_RADIUS (used for
+    // every other obstacle) instead of understating it.
+    const jettiesX = [-245.0 * WORLD_SCALE, -195.0 * WORLD_SCALE, -145.0 * WORLD_SCALE];
+    for (const jx of jettiesX) {
+        if (Math.abs(x - jx) < 5.5 && y <= -115.0 * WORLD_SCALE && y >= -175.0 * WORLD_SCALE) return true;
+    }
+    return false;
+}
+
+// Single obstacle predicate for the whole pathfinder: outside the navigable
+// lake (shoreline/greenery), the island, the marina structure, or within
+// SAFETY_RADIUS of any live obstacle (buoys, moving boats, and the ~30
+// baked-in moored boats, all passed in via `obstacles`).
+function isPointBlocked(x, y, obstacles) {
+    if (Math.hypot(x, y) > LAKE_RADIUS - SHORE_MARGIN) return true;
+    if (Math.hypot(x - ISLAND_X, y - ISLAND_Y) < ISLAND_KEEP_OUT) return true;
+    if (isInsideMarinaStructure(x, y)) return true;
+    for (const obs of obstacles) {
+        if (Math.hypot(x - obs.ros_x, y - obs.ros_y) < SAFETY_RADIUS) return true;
+    }
+    return false;
+}
+
+// Segment-blocked check, sampled at sub-grid resolution against the SAME
+// predicate the grid search uses — this is what keeps the "is a straight
+// line clear?" fast path and the A* grid in agreement.
+function isSegmentBlocked(p1, p2, obstacles) {
+    const dx = p2.x - p1.x;
+    const dy = p2.y - p1.y;
+    const len = Math.hypot(dx, dy);
+    if (len === 0) return isPointBlocked(p1.x, p1.y, obstacles);
+    const steps = Math.max(1, Math.ceil(len / 1.0)); // sample every ~1m
+    for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        if (isPointBlocked(p1.x + t * dx, p1.y + t * dy, obstacles)) return true;
+    }
+    return false;
+}
+
+// Minimal binary min-heap for A*'s open set — the old BFS used a plain
+// array with .shift() as its queue, which is O(n) per pop (O(n^2) overall
+// on the ~140x140 cell grid) and was slow enough, re-run every 250ms during
+// Mode 1's live replanning, to visibly stutter the frame loop.
+class MinHeap {
+    constructor() { this.items = []; }
+    get size() { return this.items.length; }
+    push(item, priority) {
+        this.items.push({ item, priority });
+        let i = this.items.length - 1;
+        while (i > 0) {
+            const parent = (i - 1) >> 1;
+            if (this.items[parent].priority <= this.items[i].priority) break;
+            [this.items[parent], this.items[i]] = [this.items[i], this.items[parent]];
+            i = parent;
+        }
+    }
+    pop() {
+        const top = this.items[0];
+        const last = this.items.pop();
+        if (this.items.length > 0) {
+            this.items[0] = last;
+            let i = 0;
+            while (true) {
+                const l = 2 * i + 1, r = 2 * i + 2;
+                let smallest = i;
+                if (l < this.items.length && this.items[l].priority < this.items[smallest].priority) smallest = l;
+                if (r < this.items.length && this.items[r].priority < this.items[smallest].priority) smallest = r;
+                if (smallest === i) break;
+                [this.items[smallest], this.items[i]] = [this.items[i], this.items[smallest]];
+                i = smallest;
+            }
+        }
+        return top ? top.item : undefined;
+    }
+}
 
 function findOptimalPath(start, goal, obstacles) {
     const validObs = obstacles.filter(o => o.type !== 'goal');
 
-    // Helper: Check line segment collision against buoys, Island land, and Marina Docks
-    function lineCollides(p1, p2) {
-        const dx = p2.x - p1.x;
-        const dy = p2.y - p1.y;
-        const len = Math.hypot(dx, dy);
-        if (len > 0) {
-            // Check Island Land Mass collision
-            const uIsl = Math.max(0, Math.min(1, ((ISLAND_X - p1.x) * dx + (ISLAND_Y - p1.y) * dy) / (len * len)));
-            const islClosestX = p1.x + uIsl * dx;
-            const islClosestY = p1.y + uIsl * dy;
-            if (Math.hypot(ISLAND_X - islClosestX, ISLAND_Y - islClosestY) < ISLAND_KEEP_OUT) {
-                return true;
-            }
-
-            // Check Rigid Marina Pier Wall Collision (Main Spine Pier y <= -173.0 & Finger Jetties x: -245, -195, -145) — positions scaled by WORLD_SCALE
-            const jettiesX = [-245.0 * WORLD_SCALE, -195.0 * WORLD_SCALE, -145.0 * WORLD_SCALE];
-            for (let t = 0; t <= 1; t += 0.1) {
-                const px = p1.x + t * dx;
-                const py = p1.y + t * dy;
-                // Main Spine Pier Wall (y <= -173.0 between x = -265 and -125)
-                if (py <= -173.0 * WORLD_SCALE && px >= -265.0 * WORLD_SCALE && px <= -125.0 * WORLD_SCALE) return true;
-                // Finger Jetties (2.5m clearance around jetty centerlines from y = -115 to -175)
-                for (const jx of jettiesX) {
-                    if (Math.abs(px - jx) < 2.5 && py <= -115.0 * WORLD_SCALE && py >= -175.0 * WORLD_SCALE) return true;
-                }
-            }
-
-            // Check buoy collisions
-            for (const obs of validObs) {
-                const u = Math.max(0, Math.min(1, ((obs.ros_x - p1.x) * dx + (obs.ros_y - p1.y) * dy) / (len * len)));
-                const closestX = p1.x + u * dx;
-                const closestY = p1.y + u * dy;
-                if (Math.hypot(obs.ros_x - closestX, obs.ros_y - closestY) < SAFETY_RADIUS) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    // Direct line check first (Instant 0ms if unblocked)
-    if (!lineCollides(start, goal)) {
+    // Direct line check first (instant if unblocked)
+    if (!isSegmentBlocked(start, goal, validObs)) {
         return [{ x: start.x, y: start.y }, { x: goal.x, y: goal.y }];
     }
 
-    // 1. Setup Grid BFS Parameters (Massive 600m Ocean Bay Pathfinder: 560m x 560m)
+    // 1. Setup Grid A* Parameters (Massive 600m Ocean Bay Pathfinder: 560m x 560m)
     const STEP = 4.0; // 4.0 meter grid cells for fast vector search
     const MIN_X = -280 * WORLD_SCALE, MAX_X = 280 * WORLD_SCALE, MIN_Y = -280 * WORLD_SCALE, MAX_Y = 280 * WORLD_SCALE;
 
@@ -1046,74 +1114,51 @@ function findOptimalPath(start, goal, obstacles) {
     const goalGx = Math.round(goal.x / STEP);
     const goalGy = Math.round(goal.y / STEP);
 
-    // 2. Pre-mark blocked grid cells (Buoys + Core Island Land Mass + Marina Docks)
-    const blocked = new Set();
+    function heuristic(gx, gy) { return Math.hypot(gx - goalGx, gy - goalGy) * STEP; }
 
-    // Mark Island Land & Safety Buffer (15.0m radius)
-    const islandRadiusCells = Math.ceil(ISLAND_KEEP_OUT / STEP);
-    const islandGx = Math.round(ISLAND_X / STEP);
-    const islandGy = Math.round(ISLAND_Y / STEP);
-    for (let dx = -islandRadiusCells; dx <= islandRadiusCells; dx++) {
-        for (let dy = -islandRadiusCells; dy <= islandRadiusCells; dy++) {
-            const gx = islandGx + dx;
-            const gy = islandGy + dy;
+    // Blocked-cell lookups are memoized per search — isPointBlocked gets
+    // called for every neighbor candidate, and neighbors are revisited often.
+    const blockedCache = new Map();
+    function cellBlocked(gx, gy) {
+        const key = toKey(gx, gy);
+        let cached = blockedCache.get(key);
+        if (cached === undefined) {
             const w = toWorld(gx, gy);
-            if (Math.hypot(w.x - ISLAND_X, w.y - ISLAND_Y) < ISLAND_KEEP_OUT) {
-                blocked.add(toKey(gx, gy));
-            }
+            cached = isPointBlocked(w.x, w.y, validObs);
+            blockedCache.set(key, cached);
         }
+        return cached;
     }
-
-    // Mark Marina Dock Structure Cells
-    const marinaRadiusCells = Math.ceil((MARINA_RADIUS + 1.5) / STEP);
-    const marinaGx = Math.round(MARINA_X / STEP);
-    const marinaGy = Math.round(MARINA_Y / STEP);
-    for (let dx = -marinaRadiusCells; dx <= marinaRadiusCells; dx++) {
-        for (let dy = -marinaRadiusCells; dy <= marinaRadiusCells; dy++) {
-            const gx = marinaGx + dx;
-            const gy = marinaGy + dy;
-            const w = toWorld(gx, gy);
-            if (Math.hypot(w.x - MARINA_X, w.y - MARINA_Y) < MARINA_RADIUS + 1.5) {
-                blocked.add(toKey(gx, gy));
-            }
-        }
-    }
-
-    // Mark Buoy Safety Cells
-    validObs.forEach(obs => {
-        const radiusCells = Math.ceil(SAFETY_RADIUS / STEP);
-        const obsGx = Math.round(obs.ros_x / STEP);
-        const obsGy = Math.round(obs.ros_y / STEP);
-
-        for (let dx = -radiusCells; dx <= radiusCells; dx++) {
-            for (let dy = -radiusCells; dy <= radiusCells; dy++) {
-                const gx = obsGx + dx;
-                const gy = obsGy + dy;
-                const w = toWorld(gx, gy);
-                if (Math.hypot(w.x - obs.ros_x, w.y - obs.ros_y) < SAFETY_RADIUS) {
-                    blocked.add(toKey(gx, gy));
-                }
-            }
-        }
-    });
-
-    // Ensure start & goal cells aren't strictly blocked from starting/ending
-    blocked.delete(toKey(startGx, startGy));
-
-    // 3. BFS Search for guaranteed shortest topological path
-    const queue = [{ gx: startGx, gy: startGy }];
-    const visited = new Set([toKey(startGx, startGy)]);
-    const cameFrom = new Map();
-    let foundGoalKey = null;
 
     const neighbors = [
-        { dx: 1, dy: 0 }, { dx: -1, dy: 0 }, { dx: 0, dy: 1 }, { dx: 0, dy: -1 },
-        { dx: 1, dy: 1 }, { dx: -1, dy: 1 }, { dx: 1, dy: -1 }, { dx: -1, dy: -1 }
+        { dx: 1, dy: 0, cost: STEP }, { dx: -1, dy: 0, cost: STEP },
+        { dx: 0, dy: 1, cost: STEP }, { dx: 0, dy: -1, cost: STEP },
+        { dx: 1, dy: 1, cost: STEP * Math.SQRT2 }, { dx: -1, dy: 1, cost: STEP * Math.SQRT2 },
+        { dx: 1, dy: -1, cost: STEP * Math.SQRT2 }, { dx: -1, dy: -1, cost: STEP * Math.SQRT2 }
     ];
 
-    while (queue.length > 0) {
-        const curr = queue.shift();
+    // 2. A* Search (start cell is always allowed to leave from, even if it's
+    // technically inside a keep-out — e.g. hugging close to an obstacle
+    // already — matching the old BFS's explicit `blocked.delete(start)`.)
+    const startKey = toKey(startGx, startGy);
+    const gScore = new Map([[startKey, 0]]);
+    const cameFrom = new Map();
+    const closed = new Set();
+    const open = new MinHeap();
+    open.push({ gx: startGx, gy: startGy }, heuristic(startGx, startGy));
+
+    let foundGoalKey = null;
+    let bestKey = startKey;
+    let bestH = heuristic(startGx, startGy);
+
+    while (open.size > 0) {
+        const curr = open.pop();
         const currKey = toKey(curr.gx, curr.gy);
+        if (closed.has(currKey)) continue;
+        closed.add(currKey);
+
+        const h = heuristic(curr.gx, curr.gy);
+        if (h < bestH) { bestH = h; bestKey = currKey; }
 
         if (curr.gx === goalGx && curr.gy === goalGy) {
             foundGoalKey = currKey;
@@ -1124,31 +1169,23 @@ function findOptimalPath(start, goal, obstacles) {
             const ngx = curr.gx + n.dx;
             const ngy = curr.gy + n.dy;
             const nWorld = toWorld(ngx, ngy);
-
             if (nWorld.x < MIN_X || nWorld.x > MAX_X || nWorld.y < MIN_Y || nWorld.y > MAX_Y) continue;
-            const nKey = toKey(ngx, ngy);
 
-            if (!visited.has(nKey) && !blocked.has(nKey)) {
-                visited.add(nKey);
+            const nKey = toKey(ngx, ngy);
+            if (closed.has(nKey) || cellBlocked(ngx, ngy)) continue;
+
+            const tentativeG = gScore.get(currKey) + n.cost;
+            if (!gScore.has(nKey) || tentativeG < gScore.get(nKey)) {
+                gScore.set(nKey, tentativeG);
                 cameFrom.set(nKey, currKey);
-                queue.push({ gx: ngx, gy: ngy });
+                open.push({ gx: ngx, gy: ngy }, tentativeG + heuristic(ngx, ngy));
             }
         }
     }
 
-    // Fallback: If exact goal is blocked/unreachable, pick visited node closest to goal
-    if (!foundGoalKey) {
-        let minGoalDist = Infinity;
-        visited.forEach(key => {
-            const [gx, gy] = key.split(',').map(Number);
-            const w = toWorld(gx, gy);
-            const d = Math.hypot(goal.x - w.x, goal.y - w.y);
-            if (d < minGoalDist) {
-                minGoalDist = d;
-                foundGoalKey = key;
-            }
-        });
-    }
+    // Fallback: goal unreachable (e.g. it's blocked) — route to the closest
+    // node actually reached instead.
+    if (!foundGoalKey) foundGoalKey = bestKey;
 
     // Reconstruct raw grid path
     let rawPath = [];
@@ -1163,13 +1200,13 @@ function findOptimalPath(start, goal, obstacles) {
     }
     rawPath[0] = { x: start.x, y: start.y };
 
-    // 4. String Pulling (Shortcut Optimization for smooth vector turns)
+    // 3. String Pulling (Shortcut Optimization for smooth vector turns)
     const smoothPath = [rawPath[0]];
     let currIdx = 0;
     while (currIdx < rawPath.length - 1) {
         let farthest = currIdx + 1;
         for (let nextIdx = rawPath.length - 1; nextIdx > currIdx + 1; nextIdx--) {
-            if (!lineCollides(rawPath[currIdx], rawPath[nextIdx])) {
+            if (!isSegmentBlocked(rawPath[currIdx], rawPath[nextIdx], validObs)) {
                 farthest = nextIdx;
                 break;
             }
@@ -1279,7 +1316,12 @@ function draw() {
             } else if (target.mode === 'approach') {
                 if (dist < 0.5) advancePath = true; // Wait to reach near the pier
             } else if (isAutoDocking) {
-                if (dist < 0.4) advancePath = true; // Tight channel precision for docking transit!
+                // 1.2m, not the standard-transit 1.8m (docking is tighter quarters)
+                // but not 0.4m either — that was tight enough that a multi-leg A*
+                // route through the marina (several short, sharp-angled corners)
+                // could get stuck circling trying to nail an intermediate corner
+                // exactly, rather than just cutting the turn and moving on.
+                if (dist < 1.2) advancePath = true;
             } else {
                 if (dist < 1.8) advancePath = true; // Standard transit tolerance
             }
@@ -1348,10 +1390,47 @@ function draw() {
                     }
                 }
 
-                // Slow the cruise target when off-heading (unrelated to stopping —
-                // just don't cruise at full speed while turning sharply)
-                const turnDragFactor = Math.max(0.45, Math.cos(yawDiff * 0.6));
-                cruiseSpeed *= turnDragFactor;
+                // Heading lock: hold position and turn first when badly
+                // misaligned, rather than cruising into the turn. A softer
+                // "just reduce speed" version of this (never below 45%) was
+                // tried and verified against the real running sim (see the
+                // headless rosbridge repro used to debug this) to still let
+                // the boat drift meaningfully off the intended line during
+                // the ~1+ second a large turn takes — because the target
+                // bearing is recomputed from the boat's OWN moving position
+                // every tick, that drift compounds (a classic pursuit-curve
+                // divergence) rather than damping out, and was enough for
+                // the boat to clip real obstacle geometry (e.g. a marina
+                // jetty) that the PLANNED straight segment never crossed.
+                // Gating hard on heading error — the same "pivot first"
+                // principle 'align' already uses — keeps the executed path
+                // close enough to the planned one that this can't happen.
+                const HEADING_LOCK = 0.5; // ~29 degrees
+                if (!pivotOnly && Math.abs(yawDiff) > HEADING_LOCK) {
+                    cruiseSpeed = 0;
+                } else if (!pivotOnly) {
+                    cruiseSpeed *= Math.max(0.4, Math.cos(yawDiff));
+                }
+
+                // Slow down ahead of a sharp UPCOMING turn, not just react to the
+                // CURRENT heading error above. An A*-planned route can string
+                // together several short, sharp-angled legs (e.g. threading
+                // between marina jetties) — approaching one at full cruise speed
+                // leaves only brakeDist ~= v^2/(2*brakeDecel) of room to slow down
+                // in, which a short leg doesn't have. Looking one waypoint ahead
+                // and easing cruiseSpeed down before the corner (not just at it)
+                // gives brakeDist time to shrink to match.
+                const nextTarget = plannedPath[pathIndex + 1];
+                if (nextTarget && !pivotOnly) {
+                    const legDx = target.x - boatPos.x, legDy = target.y - boatPos.y;
+                    const nextDx = nextTarget.x - target.x, nextDy = nextTarget.y - target.y;
+                    const legLen = Math.hypot(legDx, legDy), nextLen = Math.hypot(nextDx, nextDy);
+                    if (legLen > 0.01 && nextLen > 0.01) {
+                        const cosTurn = (legDx * nextDx + legDy * nextDy) / (legLen * nextLen); // 1 = straight, -1 = reversal
+                        const turnAheadFactor = Math.max(0.3, (cosTurn + 1) / 2);
+                        cruiseSpeed *= turnAheadFactor;
+                    }
+                }
 
                 // --- Linear: cruise, then glide to a stop exactly at the waypoint ---
                 if (pivotOnly) {
@@ -1389,10 +1468,13 @@ function draw() {
 
                 // Hull is already touching a solid boundary (island/pier wall/moored
                 // vessel/buoy) — kill any further FORWARD push into it, like running
-                // aground into thick mud, but leave reverse alone so it can always
-                // back itself off instead of getting stuck.
+                // aground into thick mud. Unlike Mode 2 (where a human is holding the
+                // stick and can just press reverse), there's no one to un-stick an
+                // autonomous run — so back off a little instead of freezing at zero,
+                // so a graze against real hull geometry doesn't strand the mission
+                // needing a manual Reset.
                 if (currentLinear > 0 && isTouchingObstacle()) {
-                    currentLinear = 0;
+                    currentLinear = Math.max(MAX_LINEAR_REV, -0.6);
                 }
 
                 // --- Angular: proportional heading control, capped at MAX_ANGULAR ---
@@ -2126,21 +2208,19 @@ function startDynamicDocking(chosen) {
         statusEl.style.color = '#00ffcc';
     }
 
-    // Find a way from wherever the boat currently is (it may be mid-lake, left
-    // over from Mode 1/2) to the marina's fairway entrance, routing around the
-    // island and any placed buoys — the same A* used by Mode 1's "RUN ASV DEMO".
-    // The marina interior itself is one big keep-out blob to that search (it's
-    // meant to route AROUND the whole marina, not into it), so it can only take
-    // us as far as the entrance; the fixed close-quarters legs below (tuned
-    // assuming a start near that entrance) take it from there into the berth.
-    const approach = findOptimalPath(
-        { x: boatPos.x, y: boatPos.y },
-        { x: DOCK_ENTRANCE_X, y: DOCK_ENTRANCE_Y },
-        entities
-    );
-    const approachWaypoints = approach.map(p => ({ x: p.x, y: p.y, mode: 'transit' }));
-
-    let dockWaypoints = [];
+    // Figure out where the close-quarters "align" pivot should happen — a
+    // pre-berth point with enough wall/jetty clearance for the pivot's full
+    // swept hull length (not just its parked width; see the per-case notes
+    // below) — then A* the ENTIRE journey there in one shot: island, user
+    // buoys/moving boats, the moored fleet, AND the marina's own dock
+    // structure (pier deck + finger jetties) are all real geometry to this
+    // search now, not a single blob the boat could only route around, so it
+    // actually threads the fairway to reach the berth instead of assuming a
+    // fixed, obstacle-blind relay of waypoints was clear. Only the final
+    // align + creep into the slot stays hand-tuned — that close-quarters
+    // maneuvering (pivot swept-length clearance, wall margins, insertion
+    // braking) needs sub-meter precision an A* grid isn't meant to give.
+    let alignX, alignY;
     if (chosen.name.includes('Spine Pier')) {
         if (isParallelMode) {
             // Pivoting sweeps the hull's footprint out to its full length
@@ -2151,44 +2231,35 @@ function startDynamicDocking(chosen) {
             // Align a safe distance further out, then creep the last stretch
             // into the tight slot already parallel to the wall.
             const ALIGN_WALL_MARGIN = 3.0;
-            const alignY = chosen.ros_y + ALIGN_WALL_MARGIN;
-            dockWaypoints = [
-                ...approachWaypoints,
-                { x: chosen.corridor_x, y: -105.0 * WORLD_SCALE, mode: 'transit' },
-                { x: chosen.corridor_x, y: alignY, mode: 'transit' },
-                { x: chosen.corridor_x, y: alignY, mode: 'align', targetYaw: chosen.parkedYaw },
-                { x: chosen.ros_x, y: chosen.ros_y, mode: 'creep' }
-            ];
+            alignX = chosen.corridor_x;
+            alignY = chosen.ros_y + ALIGN_WALL_MARGIN;
         } else {
-            dockWaypoints = [
-                ...approachWaypoints,
-                { x: chosen.ros_x, y: -105.0 * WORLD_SCALE, mode: 'transit' },
-                { x: chosen.ros_x, y: -145.0 * WORLD_SCALE, mode: 'transit' },
-                { x: chosen.ros_x, y: -145.0 * WORLD_SCALE, mode: 'align', targetYaw: chosen.parkedYaw },
-                { x: chosen.ros_x, y: chosen.ros_y, mode: 'creep' }
-            ];
+            alignX = chosen.ros_x;
+            alignY = -145.0 * WORLD_SCALE;
         }
     } else {
-        // Finger Jetties (Vertical docks):
-        // 1. Transit through North Open Water (-105.0) to open channel corridor_x
-        // 2. Descend wide open fairway to berth Y-level (still out in the open channel)
-        // 3. Align to parkedYaw HERE, not after already creeping into the slot —
-        //    this used to creep in first and pivot last, meaning side-docking's
-        //    ~90° turn (parkedYaw is perpendicular to the approach heading for
-        //    parallel/side berths) happened stationary, wedged against the jetty
-        //    wall/neighboring moored boat, sweeping the hull's full ~2.8m length
-        //    into them almost every time. Same fix already applied to the Spine
-        //    Pier case above — align with clearance, then creep in already close
-        //    to the right heading.
-        // 4. Creep sideways/across channel into berth position (ros_x, ros_y)
-        dockWaypoints = [
-            ...approachWaypoints,
-            { x: chosen.corridor_x, y: -105.0 * WORLD_SCALE, mode: 'transit' },
-            { x: chosen.corridor_x, y: chosen.ros_y, mode: 'transit' },
-            { x: chosen.corridor_x, y: chosen.ros_y, mode: 'align', targetYaw: chosen.parkedYaw },
-            { x: chosen.ros_x, y: chosen.ros_y, mode: 'creep' }
-        ];
+        // Finger Jetties: align out in the open channel at corridor_x/berth
+        // Y-level, not after already creeping into the slot — this used to
+        // creep in first and pivot last, meaning side-docking's ~90° turn
+        // (parkedYaw is perpendicular to the approach heading for
+        // parallel/side berths) happened stationary, wedged against the
+        // jetty wall/neighboring moored boat, sweeping the hull's full
+        // ~2.8m length into them almost every time.
+        alignX = chosen.corridor_x;
+        alignY = chosen.ros_y;
     }
+
+    const transit = findOptimalPath(
+        { x: boatPos.x, y: boatPos.y },
+        { x: alignX, y: alignY },
+        entities
+    );
+
+    const dockWaypoints = [
+        ...transit.map(p => ({ x: p.x, y: p.y, mode: 'transit' })),
+        { x: alignX, y: alignY, mode: 'align', targetYaw: chosen.parkedYaw },
+        { x: chosen.ros_x, y: chosen.ros_y, mode: 'creep' }
+    ];
 
     plannedPath = dockWaypoints;
     pathIndex = 1;
