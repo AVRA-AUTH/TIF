@@ -323,22 +323,31 @@
       </plugin>
 
       <!-- Differential thrust, straight aft (no steering joint — this boat
-           only needs left/right differential thrust). max_thrust_cmd
-           recomputed for the real-hydrodynamics-model drag coefficients
-           above (a first pass used 500N/side sized against badly-off VRX-
-           scaled drag; those real coefficients are much lower, so the same
-           500N/side would settle well past 6 m/s — recomputed here instead
-           of left stale): xU*v + xUU*v^2 = 1.05*6 + 16.24*36 ≈ 591N total
-           at this boat's existing 6.0 m/s MAX_LINEAR_FWD target, ~300N/side.
-           min_thrust_cmd recomputed the same way: the original -180N/side
-           let commanded reverse (cmd_vel_thrust_mixer.py applies the full
-           linear_thrust to BOTH thrusters, not split in half) saturate that
-           floor and settle at ~4.7 m/s in real testing — nowhere near
-           web_ui/app.js's intended MAX_LINEAR_REV = -1.5 m/s slow-astern
-           behavior. Solving the same drag balance for that target instead:
-           xU*v + xUU*v^2 = 1.05*1.5 + 16.24*1.5^2 ≈ 38.1N total, ~19.1N/side
-           — giving the boat a genuinely weak reverse, matching how reverse
-           thrust is much weaker than forward on most real vessels.
+           only needs left/right differential thrust).
+
+           max_thrust_cmd/min_thrust_cmd are now REAL hardware numbers, not
+           back-derived from a software speed target like the two previous
+           passes here were (first 500N/side against badly-off VRX-scaled
+           drag, then ~300N/-19.1N reverse-engineered from arbitrary 6.0/1.5
+           m/s targets in web_ui/app.js). This boat's actual motor is a
+           single Blue Robotics T200 per side — confirmed via this project's
+           own AVRA/Matlab/ASV_BMS/init_Pwm.m, which loads
+           "T200-Public-Performance-Data-10-20V-September-2019.xlsx" and
+           sweeps voltages=[10,12,14,16]. Real operating voltage: this
+           project's Init_BMS.m offers three battery chemistries (LFP 5S
+           @16.0V nominal, NMC/NCA 4S @14.4V nominal) — all landing at the
+           top of that PWM sweep, so the datasheet's 16V row is the
+           grounded choice, not the 20V "max" row: 5.25 kgf forward / 4.1
+           kgf reverse per thruster = 51.5N / 40.2N (×9.80665).
+           web_ui/app.js's MAX_LINEAR_FWD/MAX_LINEAR_REV were updated to
+           match the real equilibrium these values produce against this
+           boat's own drag model (xU*v + xUU*v^2 = force, both thrusters
+           combined since cmd_vel_thrust_mixer.py applies full thrust to
+           each side, not split): forward 2×51.5N=103N -> ~2.49 m/s;
+           reverse 2×40.2N=80.4N -> ~2.19 m/s. Real reverse ends up close to
+           real forward (88% ratio) — nothing like the old 300N/-19.1N
+           caps' 4x gap, which was an artifact of two independently-chosen
+           software targets, not anything about the actual thruster.
            thrust_coefficient/propeller_diameter/fluid_density copied from
            VRX's own wamv_gazebo_thruster_config.xacro reference (diameter
            scaled by the same 0.306 length factor); velocity_control=true
@@ -361,8 +370,8 @@
         <fluid_density>1000</fluid_density>
         <propeller_diameter>0.06</propeller_diameter>
         <velocity_control>true</velocity_control>
-        <max_thrust_cmd>300</max_thrust_cmd>
-        <min_thrust_cmd>-19.1</min_thrust_cmd>
+        <max_thrust_cmd>51.5</max_thrust_cmd>
+        <min_thrust_cmd>-40.2</min_thrust_cmd>
         <topic>thrusters/left/thrust</topic>
       </plugin>
       <plugin filename="gz-sim-thruster-system" name="gz::sim::systems::Thruster">
@@ -371,8 +380,8 @@
         <fluid_density>1000</fluid_density>
         <propeller_diameter>0.06</propeller_diameter>
         <velocity_control>true</velocity_control>
-        <max_thrust_cmd>300</max_thrust_cmd>
-        <min_thrust_cmd>-19.1</min_thrust_cmd>
+        <max_thrust_cmd>51.5</max_thrust_cmd>
+        <min_thrust_cmd>-40.2</min_thrust_cmd>
         <topic>thrusters/right/thrust</topic>
       </plugin>
 

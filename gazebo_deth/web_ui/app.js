@@ -1,9 +1,41 @@
+// ================= WORLD LAYOUT SCALE ================= //
+// Applied to every map POSITION (island, marina/piers/jetties/berths, boat
+// spawn, pathfinding grid bounds, coastal city, LAKE_RADIUS) at the user's
+// explicit request to shrink the water body — overriding earlier caution
+// (see HANDOFF.md) about compressing the tightly-packed marina. Lowered
+// again from the earlier 0.5 to 0.4 per a later explicit request to cut
+// travel time further: every position below scales with this constant, so
+// the whole layout (spawn -> marina -> island) shrinks together and stays
+// internally consistent.
+// Per explicit user choice, SIZES (pier length/width, jetty dimensions,
+// buoy radius, boat hull, etc.) are NOT scaled, only positions — the piers/
+// jetties are now more tightly packed and may visually overlap; that
+// tradeoff was accepted knowingly, not an oversight.
+const WORLD_SCALE = 0.4;
+
 // ================= MODE 2 (JOYSTICK DRIVE) TUNABLES ================= //
-const MAX_LINEAR_FWD = 6.0;      // top forward speed (m/s)
-const MAX_LINEAR_REV = -1.5;     // top reverse speed (m/s)
+// FWD/REV updated from real hardware: a single Blue Robotics T200 per side
+// at this project's real ~16V operating voltage (AVRA/Matlab/ASV_BMS/
+// init_Pwm.m + Init_BMS.m) gives 51.5N/-40.2N per thruster — see
+// exhibition_water.sdf's max_thrust_cmd/min_thrust_cmd derivation comment.
+// Solving this boat's own drag model for that combined force gives these
+// equilibrium speeds (was 6.0/-1.5, both back-derived software targets with
+// no real hardware basis).
+const MAX_LINEAR_FWD = 2.49;     // top forward speed (m/s) — real T200 @16V
+const MAX_LINEAR_REV = -2.19;    // top reverse speed (m/s) — real T200 @16V
 const MAX_ANGULAR = 1.2;         // top turn rate (rad/s)
 const THRUST_RAMP_RATE = 6.0;    // units/sec: how fast velocity reaches its target while a thruster is held open
 const WATER_FRICTION_RATE = 1.0; // units/sec: how fast velocity decays toward zero once released
+
+// Mode 1/3 docking-leg speeds, expressed as ratios of MAX_LINEAR_FWD instead
+// of flat numbers, so they scale automatically if the top speed is ever
+// retuned again. Ratios preserve the original tuning (1.6/-1.3/1.3 m/s and
+// a 0.3 m/s^2 brake) against the OLD MAX_LINEAR_FWD=6.0 this boat used
+// before the real-T200 retune.
+const DOCK_APPROACH_SPEED_RATIO = 1.6 / 6.0;        // ~0.267
+const DOCK_REVERSE_SWING_SPEED_RATIO = -1.3 / 6.0;  // ~-0.217
+const DOCK_CREEP_SPEED_RATIO = 1.3 / 6.0;           // ~0.217
+const DOCK_BRAKE_DECEL = 0.3 * (MAX_LINEAR_FWD / 6.0); // ~0.1245 m/s^2
 
 // Connect to ROS via roslibjs
 const ros = new ROSLIB.Ros({
@@ -32,18 +64,97 @@ const spawnTopic = new ROSLIB.Topic({ ros: ros, name: '/exhibition/spawn_obstacl
 const cmdVelTopic = new ROSLIB.Topic({ ros: ros, name: '/cmd_vel', messageType: 'geometry_msgs/Twist' });
 const odomTopic = new ROSLIB.Topic({ ros: ros, name: '/odom', messageType: 'nav_msgs/Odometry' });
 const goalTopic = new ROSLIB.Topic({ ros: ros, name: '/goal_pose', messageType: 'geometry_msgs/PoseStamped' });
+// Raw per-thruster topics — same ones cmd_vel_thrust_mixer.py publishes to,
+// but written directly from the browser for independent thruster control
+// (W/A/R/D below), bypassing /cmd_vel and the mixer entirely.
+const leftThrustTopic = new ROSLIB.Topic({ ros: ros, name: '/asv_boat/thrusters/left/thrust', messageType: 'std_msgs/Float64' });
+const rightThrustTopic = new ROSLIB.Topic({ ros: ros, name: '/asv_boat/thrusters/right/thrust', messageType: 'std_msgs/Float64' });
+// Mirrors exhibition_water.sdf's max_thrust_cmd/min_thrust_cmd — independent
+// thruster control targets each thruster's real physical limit directly,
+// not a JS-side demand ceiling. Real T200-at-16V values (5.25/4.1 kgf).
+const THRUSTER_MAX_FWD_N = 51.5;
+const THRUSTER_MIN_REV_N = -40.2;
+
+// ============== DOF Panel (Mode 2 only — real /odom, not the JS sim) ============== //
+// Scoped to surge and yaw rate specifically — heave/pitch are the interesting
+// DOFs for the buoyancy bug hunted down in HANDOFF.md's Session update, but
+// surge/yaw are what matter for actually driving the boat, which is this
+// panel's purpose. Heave/pitch stay diagnosable via a raw /odom capture if
+// that investigation ever needs to resume.
+const DOF_HISTORY_LEN = 150; // ~3s of history at the odom plugin's ~50Hz rate
+const dofPanel = document.getElementById('dof-panel');
+const dofHist = { surge: [], yawRate: [] };
+const dofCanvas = {
+    surge: document.getElementById('dof-surge-chart'),
+    yawRate: document.getElementById('dof-yawrate-chart'),
+};
+const dofValEl = {
+    surge: document.getElementById('dof-surge-val'),
+    yawRate: document.getElementById('dof-yawrate-val'),
+};
+
+function pushDof(key, value) {
+    const arr = dofHist[key];
+    arr.push(value);
+    if (arr.length > DOF_HISTORY_LEN) arr.shift();
+}
+
+// Simple auto-scaled sparkline with a zero reference line — good enough to see
+// oscillation, bias, and decay at a glance without pulling in a charting lib.
+function drawSparkline(canvas, hist) {
+    if (!canvas || hist.length < 2) return;
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width, h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+
+    let min = Math.min(...hist, 0);
+    let max = Math.max(...hist, 0);
+    const range = (max - min) || 1;
+    const pad = range * 0.15;
+    min -= pad;
+    max += pad;
+
+    const zy = h - ((0 - min) / (max - min)) * h;
+    ctx.strokeStyle = '#333344';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, zy);
+    ctx.lineTo(w, zy);
+    ctx.stroke();
+
+    ctx.strokeStyle = '#00ffcc';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    hist.forEach((v, i) => {
+        const x = (i / (hist.length - 1)) * w;
+        const y = h - ((v - min) / (max - min)) * h;
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+}
+
+function updateDofPanel(surge, yawRate) {
+    pushDof('surge', surge);
+    pushDof('yawRate', yawRate);
+
+    dofValEl.surge.textContent = surge.toFixed(2);
+    dofValEl.yawRate.textContent = yawRate.toFixed(2);
+
+    drawSparkline(dofCanvas.surge, dofHist.surge);
+    drawSparkline(dofCanvas.yawRate, dofHist.yawRate);
+}
 
 // State (Starting at Harbor Fairway Channel Entrance)
-let boatPos = { x: -220.0, y: -95.0, yaw: -1.57, speed: 0 };
+let boatPos = { x: -220.0 * WORLD_SCALE, y: -95.0 * WORLD_SCALE, yaw: -1.57, speed: 0 };
 let currentMode = 'static';
 let activeAppMode = 1;
 
 // Pre-Defined Open Marina Docking Berths (Side Parking & Slip Parking)
 const availableBerths = [
-    { id: 0, name: 'Berth #1: Main Spine Pier (Side Parking)', ros_x: -215.0, ros_y: -171.5, fairway_x: -215.0, type: 'parallel' },
-    { id: 1, name: 'Berth #2: Jetty 2 Left Pier Face (Side Parking)', ros_x: -198.2, ros_y: -142.2, fairway_x: -220.0, type: 'parallel' },
-    { id: 2, name: 'Berth #3: Jetty 2 Right Slip (Bow-In Docking)', ros_x: -189.0, ros_y: -142.2, fairway_x: -172.0, type: 'slip' },
-    { id: 3, name: 'Berth #4: Jetty 3 Left Slip (Bow-In Docking)', ros_x: -139.0, ros_y: -142.0, fairway_x: -158.0, type: 'slip' }
+    { id: 0, name: 'Berth #1: Main Spine Pier (Side Parking)', ros_x: -215.0 * WORLD_SCALE, ros_y: -171.5 * WORLD_SCALE, fairway_x: -215.0 * WORLD_SCALE, type: 'parallel' },
+    { id: 1, name: 'Berth #2: Jetty 2 Left Pier Face (Side Parking)', ros_x: -198.2 * WORLD_SCALE, ros_y: -142.2 * WORLD_SCALE, fairway_x: -220.0 * WORLD_SCALE, type: 'parallel' },
+    { id: 2, name: 'Berth #3: Jetty 2 Right Slip (Bow-In Docking)', ros_x: -189.0 * WORLD_SCALE, ros_y: -142.2 * WORLD_SCALE, fairway_x: -172.0 * WORLD_SCALE, type: 'slip' },
+    { id: 3, name: 'Berth #4: Jetty 3 Left Slip (Bow-In Docking)', ros_x: -139.0 * WORLD_SCALE, ros_y: -142.0 * WORLD_SCALE, fairway_x: -158.0 * WORLD_SCALE, type: 'slip' }
 ];
 let activeBerthIdx = 1; // Default to Berth #2 Side Parking
 let entities = [];
@@ -115,13 +226,15 @@ function triggerShipwreck(entity) {
     }, 100);
 }
 
-// Listen to boat Odometry — the sole source of boatPos in Mode 2 (Modes 1/3
-// keep their own client-side kinematic sim; see draw()'s nav-state-machine
-// block). Always sync while in Mode 2, including down to zero speed, so a
-// released thruster genuinely shows Gazebo's real coast-down instead of
-// freezing on the last update above a threshold.
+// Listen to boat Odometry — the sole source of boatPos in ALL modes now.
+// Mode 2 (manual drive) and Mode 1/3 (auto-nav/docking, via isNavigating)
+// both publish /cmd_vel as a DEMAND and read the real result back here —
+// neither integrates position itself anymore. Always sync down to zero
+// speed too, so a released thruster (or a completed nav leg) genuinely
+// shows Gazebo's real coast-down instead of freezing on the last update
+// above a threshold.
 odomTopic.subscribe((msg) => {
-    if (activeAppMode !== 2) return;
+    if (activeAppMode !== 2 && !isNavigating) return;
     // twist is in the child_frame (base_link, body frame) per this odometry
     // plugin's config (robot_base_frame: base_link) — linear.x is signed
     // surge speed (forward positive, reverse negative) directly, not a
@@ -132,20 +245,28 @@ odomTopic.subscribe((msg) => {
     boatPos.speed = msg.twist.twist.linear.x;
     const q = msg.pose.pose.orientation;
     boatPos.yaw = Math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z));
+
+    // DOF panel: yaw rate is twist.angular.z (body frame, already signed).
+    // Updates whenever boatPos itself is being synced (all modes now),
+    // matching the panel's visibility (Part B).
+    const yawRate = msg.twist.twist.angular.z;
+    updateDofPanel(boatPos.speed, yawRate);
 });
 
-// Canvas Setup (Massive World: 1 meter = 0.65 pixels for 600m wide ocean lake/bay)
+// Canvas Setup. SCALE is chosen so the navigable lake circle (LAKE_RADIUS,
+// defined below) fills most of the 550x500 map canvas instead of being a
+// small circle lost in a sea of green land — per explicit user request.
 const canvas = document.getElementById('mapCanvas');
 const ctx = canvas.getContext('2d');
-const SCALE = 0.65;
+const SCALE = 1.35;
 
 function getCurrentViewParams() {
     if (activeAppMode === 3) {
         // Zoomed in on Marina
-        return { scale: 3.5, offsetX: -195.0, offsetY: -145.0 }; // ROS center of marina
+        return { scale: 3.5, offsetX: -195.0 * WORLD_SCALE, offsetY: -145.0 * WORLD_SCALE }; // ROS center of marina
     }
     // Global view
-    return { scale: 0.65, offsetX: 0.0, offsetY: 0.0 };
+    return { scale: SCALE, offsetX: 0.0, offsetY: 0.0 };
 }
 
 function rosToCanvas(rx, ry) {
@@ -314,8 +435,13 @@ for (let b = 0; b < 9; b++) {
     flock.push(bird);
 }
 
-// 2. Circular Lake Water Body (300m radius ocean bay = 600m wide!)
-const LAKE_RADIUS = 300.0;
+// 2. Circular Lake Water Body. Uses a bigger pre-scale reference (350, was
+// 300) than the marina/island layout so the lake grows slightly relative to
+// the marina footprint below — the marina's farthest pier corner sits at
+// ~126.6m from origin at this WORLD_SCALE, so this leaves it a real margin
+// inside the shore instead of poking through it (confirmed by hand: old
+// 300 reference put that same corner just OUTSIDE the shoreline).
+const LAKE_RADIUS = 350.0 * WORLD_SCALE;
 const waterGeo = new THREE.RingGeometry(0.001, LAKE_RADIUS, 128, 32); // High-density mesh for fluid wave motion
 
 const waterMat = new THREE.MeshPhongMaterial({
@@ -334,16 +460,20 @@ waterMesh.receiveShadow = true;
 scene.add(waterMesh);
 
 // 3. Surrounding Shoreline Land Mass & Forest (Trees strictly on land!)
-// Outer Sandy Beach Ring (296m to 330m)
-const beachGeo = new THREE.RingGeometry(295, 330, 64);
+// Outer Sandy Beach Ring, tied directly to LAKE_RADIUS (previously a fixed
+// 295-330 left over from before WORLD_SCALE existed — that stranded the
+// beach/land ring far outside the actual water body, leaving a bare gap
+// between the lake edge and the shore with nothing rendered in it).
+const beachGeo = new THREE.RingGeometry(LAKE_RADIUS - 5, LAKE_RADIUS + 15, 64);
 const beachMat = new THREE.MeshLambertMaterial({ color: 0xd2b48c, side: THREE.DoubleSide });
 const beachMesh = new THREE.Mesh(beachGeo, beachMat);
 beachMesh.rotation.x = -Math.PI / 2;
 beachMesh.position.y = -0.05;
 scene.add(beachMesh);
 
-// Surrounding Green Forest Hills Land Mass (328m to 1200m)
-const landGeo = new THREE.RingGeometry(328, 1200, 64);
+// Surrounding Green Forest Hills Land Mass — starts right where the beach
+// ends, also tied to LAKE_RADIUS for the same reason.
+const landGeo = new THREE.RingGeometry(LAKE_RADIUS + 13, LAKE_RADIUS * 4, 64);
 const landMat = new THREE.MeshLambertMaterial({ color: 0x3e5c26, side: THREE.DoubleSide });
 const landMesh = new THREE.Mesh(landGeo, landMat);
 landMesh.rotation.x = -Math.PI / 2;
@@ -372,23 +502,28 @@ function createTree(x, z, scale = 1.0) {
     return treeGroup;
 }
 
-// Generate Trees STRICTLY on outer land terrain (r >= 332m, 100% clear of water!)
+// Generate Trees STRICTLY on outer land terrain, starting right at the land
+// ring's inner edge (tied to LAKE_RADIUS, same reasoning as beachGeo/landGeo
+// above — a fixed radius here would leave trees stranded far from the
+// now-smaller lake).
 for (let angle = 0; angle < Math.PI * 2; angle += 0.05) {
-    const r = 332 + Math.sin(angle * 6) * 20 + Math.random() * 80;
+    const r = (LAKE_RADIUS + 15) + Math.sin(angle * 6) * 9 + Math.random() * 37;
     const tx = Math.cos(angle) * r;
     const tz = Math.sin(angle) * r;
     scene.add(createTree(tx, tz, 1.2 + Math.random() * 1.0));
 }
 
-// Core Land Obstacle: Scenic Central Island in Ocean Bay (x: 60m, z: -45m, radius: 25m)
-const ISLAND_X = 60.0;
-const ISLAND_Y = 45.0;
+// Core Land Obstacle: Scenic Central Island in Ocean Bay. Placed dead center
+// of the lake (was offset toward the marina corner) per explicit request
+// that the island sit in the middle rather than off to one side.
+const ISLAND_X = 0.0;
+const ISLAND_Y = 0.0;
 const ISLAND_RADIUS = 25.0;
 const ISLAND_KEEP_OUT = ISLAND_RADIUS + 8.0; // 33.0m keep-out buffer (Guaranteed clearance, NO island crashes!)
 
 // Core Structure Obstacle: Marina Dock & Pier at Bottom-Left (x: -215m, y: -165m, radius: 25m)
-const MARINA_X = -215.0;
-const MARINA_Y = -165.0;
+const MARINA_X = -215.0 * WORLD_SCALE;
+const MARINA_Y = -165.0 * WORLD_SCALE;
 const MARINA_RADIUS = 25.0;
 
 const islandGroup = new THREE.Group();
@@ -417,18 +552,18 @@ const marinaGroup = new THREE.Group();
 // Main Horizontal Floating Spine Pier (z = 175.0, ROS y = -175.0)
 const pierMat = new THREE.MeshLambertMaterial({ color: 0x5d4037, roughness: 0.8 });
 const mainPier = new THREE.Mesh(new THREE.BoxGeometry(130, 0.8, 6), pierMat);
-mainPier.position.set(-195, 0.4, 175);
+mainPier.position.set(-195 * WORLD_SCALE, 0.4, 175 * WORLD_SCALE);
 marinaGroup.add(mainPier);
 
 // 3 Vertical Finger Jetties extending perpendicularly up into water (z = 175 down to z = 115)
-const jettiesX = [-245.0, -195.0, -145.0];
+const jettiesX = [-245.0 * WORLD_SCALE, -195.0 * WORLD_SCALE, -145.0 * WORLD_SCALE];
 jettiesX.forEach(jx => {
     const jetty = new THREE.Mesh(new THREE.BoxGeometry(4, 0.8, 62), pierMat);
-    jetty.position.set(jx, 0.4, 144);
+    jetty.position.set(jx, 0.4, 144 * WORLD_SCALE);
     marinaGroup.add(jetty);
 
     // Mooring Pylons along each finger jetty
-    for (let pz = 115; pz <= 173; pz += 6.5) {
+    for (let pz = 115 * WORLD_SCALE; pz <= 173 * WORLD_SCALE; pz += 6.5 * WORLD_SCALE) {
         const pylonL = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 4.5, 8), new THREE.MeshLambertMaterial({ color: 0x3e2723 }));
         pylonL.position.set(jx - 1.8, 0.9, pz);
         const pylonR = pylonL.clone();
@@ -471,41 +606,41 @@ function createMooredBoat(x, z, hullColor, boatType = 'yacht') {
 }
 
 // Populate Jetty 1 (Left Jetty at x: -245.0) - Densely Packed Side-by-Side (z: 168 to 120)
-const zList = [168, 161.5, 155, 148.5, 142, 135.5, 129, 122.5];
+const zList = [168, 161.5, 155, 148.5, 142, 135.5, 129, 122.5].map(z => z * WORLD_SCALE);
 const colorsList = [0x1d3557, 0x2a9d8f, 0xe63946, 0x457b9d, 0x0f4c5c, 0x3d5a80, 0x9b5de5, 0xf15bb5];
 const typesList = ['yacht', 'sailboat', 'speedboat', 'yacht', 'sailboat', 'speedboat', 'yacht', 'sailboat'];
 
 // Populate Jetty 1 (Left Jetty at x: -245.0) - Open Berth #1 at z: 142.0
 zList.forEach((z, idx) => {
-    if (Math.abs(z - 142.0) > 3.0) {
-        marinaGroup.add(createMooredBoat(-251, z, colorsList[idx % colorsList.length], typesList[idx % typesList.length]));
+    if (Math.abs(z - 142.0 * WORLD_SCALE) > 3.0) {
+        marinaGroup.add(createMooredBoat(-251 * WORLD_SCALE, z, colorsList[idx % colorsList.length], typesList[idx % typesList.length]));
     }
-    marinaGroup.add(createMooredBoat(-239, z, colorsList[(idx + 2) % colorsList.length], typesList[(idx + 1) % typesList.length]));
+    marinaGroup.add(createMooredBoat(-239 * WORLD_SCALE, z, colorsList[(idx + 2) % colorsList.length], typesList[(idx + 1) % typesList.length]));
 });
 
 // Populate Jetty 2 (Middle Jetty at x: -195.0) - Open Berth #2 at z: 142.2 (Tight 40cm Gap) and Open Berth #3 at z: 142.2 (Right Side)
-marinaGroup.add(createMooredBoat(-201, 168, 0xf8f9fa, 'yacht'));
-marinaGroup.add(createMooredBoat(-201, 161.5, 0x2a9d8f, 'sailboat'));
-marinaGroup.add(createMooredBoat(-201, 155, 0x0f4c5c, 'speedboat'));
-marinaGroup.add(createMooredBoat(-201, 148.5, 0xe63946, 'yacht')); // TOP BOUNDARY OF BERTH #2
+marinaGroup.add(createMooredBoat(-201 * WORLD_SCALE, 168 * WORLD_SCALE, 0xf8f9fa, 'yacht'));
+marinaGroup.add(createMooredBoat(-201 * WORLD_SCALE, 161.5 * WORLD_SCALE, 0x2a9d8f, 'sailboat'));
+marinaGroup.add(createMooredBoat(-201 * WORLD_SCALE, 155 * WORLD_SCALE, 0x0f4c5c, 'speedboat'));
+marinaGroup.add(createMooredBoat(-201 * WORLD_SCALE, 148.5 * WORLD_SCALE, 0xe63946, 'yacht')); // TOP BOUNDARY OF BERTH #2
 
-// ===> OPEN BERTH #2: X: -201.0, Y: -142.2 (z = 142.2) <===
+// ===> OPEN BERTH #2: X: -201.0, Y: -142.2 (z = 142.2) <=== (ROS coords, pre-WORLD_SCALE)
 
-marinaGroup.add(createMooredBoat(-201, 135.9, 0x1d3557, 'yacht')); // BOTTOM BOUNDARY OF BERTH #2
-marinaGroup.add(createMooredBoat(-201, 129.4, 0x37474f, 'sailboat'));
-marinaGroup.add(createMooredBoat(-201, 122.9, 0x457b9d, 'speedboat'));
+marinaGroup.add(createMooredBoat(-201 * WORLD_SCALE, 135.9 * WORLD_SCALE, 0x1d3557, 'yacht')); // BOTTOM BOUNDARY OF BERTH #2
+marinaGroup.add(createMooredBoat(-201 * WORLD_SCALE, 129.4 * WORLD_SCALE, 0x37474f, 'sailboat'));
+marinaGroup.add(createMooredBoat(-201 * WORLD_SCALE, 122.9 * WORLD_SCALE, 0x457b9d, 'speedboat'));
 
 // Right side berths of Jetty 2 - Open Berth #3 at z: 142.2
 zList.forEach((z, idx) => {
-    if (Math.abs(z - 142.2) > 3.0) {
-        marinaGroup.add(createMooredBoat(-189, z, colorsList[(idx + 3) % colorsList.length], typesList[idx % typesList.length]));
+    if (Math.abs(z - 142.2 * WORLD_SCALE) > 3.0) {
+        marinaGroup.add(createMooredBoat(-189 * WORLD_SCALE, z, colorsList[(idx + 3) % colorsList.length], typesList[idx % typesList.length]));
     }
 });
 
 // Populate Jetty 3 (Right Jetty at x: -145.0) - Open Berth #4 at z: 142.0
 zList.forEach((z, idx) => {
-    if (Math.abs(z - 142.0) > 3.0) {
-        marinaGroup.add(createMooredBoat(-139, z, colorsList[(idx + 1) % colorsList.length], typesList[(idx + 2) % typesList.length]));
+    if (Math.abs(z - 142.0 * WORLD_SCALE) > 3.0) {
+        marinaGroup.add(createMooredBoat(-139 * WORLD_SCALE, z, colorsList[(idx + 1) % colorsList.length], typesList[(idx + 2) % typesList.length]));
     }
 });
 
@@ -525,29 +660,34 @@ const officeMesh = new THREE.Mesh(
     new THREE.BoxGeometry(10, 6, 8),
     new THREE.MeshStandardMaterial({ color: 0xf1faee, roughness: 0.3 })
 );
-officeMesh.position.set(-260, 3.8, 175);
+officeMesh.position.set(-260 * WORLD_SCALE, 3.8, 175 * WORLD_SCALE);
 
 const officeRoof = new THREE.Mesh(
     new THREE.ConeGeometry(7, 3, 4),
     new THREE.MeshStandardMaterial({ color: 0xe63946 })
 );
 officeRoof.rotation.y = Math.PI / 4;
-officeRoof.position.set(-260, 8.3, 175);
+officeRoof.position.set(-260 * WORLD_SCALE, 8.3, 175 * WORLD_SCALE);
 
 const beaconLight = new THREE.PointLight(0x00ffff, 2.5, 30);
-beaconLight.position.set(-260, 9.0, 175);
+beaconLight.position.set(-260 * WORLD_SCALE, 9.0, 175 * WORLD_SCALE);
 marinaGroup.add(officeMesh, officeRoof, beaconLight);
 
-// Coastal Town Villas & City Buildings nestled exactly on the Coast (r = ~305m)
+// Coastal Town Villas & City Buildings, nestled just past the beach on the
+// NE shore (r ~= 165-200m from origin). Previously fixed at r ~= 305-330m —
+// a leftover from before WORLD_SCALE existed, left behind when the lake
+// shrank so the "coastal" city ended up nowhere near the actual coast.
+// Repositioned (not just rescaled) to sit right at the new, smaller
+// shoreline instead, on the opposite side of the lake from the marina.
 const bldgColors = [0xfaf0e6, 0xdfc09f, 0xe8d8c8, 0xd7ccc8, 0xc05a46, 0xefebe9];
 const bldgPositions = [
-    { x: 215, z: -215, w: 16, h: 20, d: 14, colorIdx: 0 },
-    { x: 235, z: -225, w: 20, h: 26, d: 18, colorIdx: 1 },
-    { x: 210, z: -235, w: 15, h: 18, d: 14, colorIdx: 2 },
-    { x: 245, z: -205, w: 18, h: 22, d: 16, colorIdx: 3 },
-    { x: 220, z: -250, w: 16, h: 20, d: 14, colorIdx: 4 },
-    { x: 260, z: -210, w: 22, h: 28, d: 20, colorIdx: 5 },
-    { x: 240, z: -245, w: 18, h: 24, d: 16, colorIdx: 0 }
+    { x: 120, z: -115, w: 16, h: 20, d: 14, colorIdx: 0 },
+    { x: 140, z: -123, w: 20, h: 26, d: 18, colorIdx: 1 },
+    { x: 112, z: -133, w: 15, h: 18, d: 14, colorIdx: 2 },
+    { x: 150, z: -111, w: 18, h: 22, d: 16, colorIdx: 3 },
+    { x: 124, z: -143, w: 16, h: 20, d: 14, colorIdx: 4 },
+    { x: 160, z: -119, w: 22, h: 28, d: 20, colorIdx: 5 },
+    { x: 142, z: -139, w: 18, h: 24, d: 16, colorIdx: 0 }
 ];
 
 bldgPositions.forEach(b => {
@@ -816,16 +956,16 @@ function findOptimalPath(start, goal, obstacles) {
                 return true;
             }
 
-            // Check Rigid Marina Pier Wall Collision (Main Spine Pier y <= -173.0 & Finger Jetties x: -245, -195, -145)
-            const jettiesX = [-245.0, -195.0, -145.0];
+            // Check Rigid Marina Pier Wall Collision (Main Spine Pier y <= -173.0 & Finger Jetties x: -245, -195, -145) — positions scaled by WORLD_SCALE
+            const jettiesX = [-245.0 * WORLD_SCALE, -195.0 * WORLD_SCALE, -145.0 * WORLD_SCALE];
             for (let t = 0; t <= 1; t += 0.1) {
                 const px = p1.x + t * dx;
                 const py = p1.y + t * dy;
                 // Main Spine Pier Wall (y <= -173.0 between x = -265 and -125)
-                if (py <= -173.0 && px >= -265.0 && px <= -125.0) return true;
+                if (py <= -173.0 * WORLD_SCALE && px >= -265.0 * WORLD_SCALE && px <= -125.0 * WORLD_SCALE) return true;
                 // Finger Jetties (2.5m clearance around jetty centerlines from y = -115 to -175)
                 for (const jx of jettiesX) {
-                    if (Math.abs(px - jx) < 2.5 && py <= -115.0 && py >= -175.0) return true;
+                    if (Math.abs(px - jx) < 2.5 && py <= -115.0 * WORLD_SCALE && py >= -175.0 * WORLD_SCALE) return true;
                 }
             }
 
@@ -849,7 +989,7 @@ function findOptimalPath(start, goal, obstacles) {
 
     // 1. Setup Grid BFS Parameters (Massive 600m Ocean Bay Pathfinder: 560m x 560m)
     const STEP = 4.0; // 4.0 meter grid cells for fast vector search
-    const MIN_X = -280, MAX_X = 280, MIN_Y = -280, MAX_Y = 280;
+    const MIN_X = -280 * WORLD_SCALE, MAX_X = 280 * WORLD_SCALE, MIN_Y = -280 * WORLD_SCALE, MAX_Y = 280 * WORLD_SCALE;
 
     function toKey(gx, gy) { return `${gx},${gy}`; }
     function toWorld(gx, gy) { return { x: gx * STEP, y: gy * STEP }; }
@@ -1010,17 +1150,17 @@ function draw() {
 
     // 2. Render Sandy Beach Shore Ring (Radius: 315m to match 3D world)
     ctx.beginPath();
-    ctx.arc(centerP.x, centerP.y, 315.0 * SCALE, 0, 2 * Math.PI);
+    ctx.arc(centerP.x, centerP.y, (LAKE_RADIUS + 15.0) * SCALE, 0, 2 * Math.PI);
     ctx.fillStyle = '#d2b48c';
     ctx.fill();
 
     // 3. Render Circular Blue Lake Water Body (Clean 2D Ocean Fill)
-    const waterGrad = ctx.createRadialGradient(centerP.x, centerP.y, 0, centerP.x, centerP.y, 300.0 * SCALE);
+    const waterGrad = ctx.createRadialGradient(centerP.x, centerP.y, 0, centerP.x, centerP.y, LAKE_RADIUS * SCALE);
     waterGrad.addColorStop(0, '#005f9e');
     waterGrad.addColorStop(1, '#002952');
 
     ctx.beginPath();
-    ctx.arc(centerP.x, centerP.y, 300.0 * SCALE, 0, 2 * Math.PI);
+    ctx.arc(centerP.x, centerP.y, LAKE_RADIUS * SCALE, 0, 2 * Math.PI);
     ctx.fillStyle = waterGrad;
     ctx.fill();
     ctx.lineWidth = 2;
@@ -1071,28 +1211,28 @@ function draw() {
         const hullXExtent = Math.abs(Math.cos(boatPos.yaw)) * 2.8 + Math.abs(Math.sin(boatPos.yaw)) * 0.8;
         const hullYExtent = Math.abs(Math.sin(boatPos.yaw)) * 2.8 + Math.abs(Math.cos(boatPos.yaw)) * 0.8;
 
-        // Main Spine Pier (y <= -173.0, x from -265.0 to -125.0)
-        if (boatPos.y - hullYExtent <= -173.0 && (boatPos.x + hullXExtent >= -265.0 && boatPos.x - hullXExtent <= -125.0) && !isShipwrecked) {
+        // Main Spine Pier (y <= -173.0, x from -265.0 to -125.0) — positions scaled by WORLD_SCALE
+        if (boatPos.y - hullYExtent <= -173.0 * WORLD_SCALE && (boatPos.x + hullXExtent >= -265.0 * WORLD_SCALE && boatPos.x - hullXExtent <= -125.0 * WORLD_SCALE) && !isShipwrecked) {
             triggerShipwreck({ type: 'quay_wall' });
         }
 
         // Finger Jetties (x = -245, -195, -145, width = 4m [jx - 2.0, jx + 2.0], y in [-175, -115])
-        const jettiesXList = [-245.0, -195.0, -145.0];
+        const jettiesXList = [-245.0 * WORLD_SCALE, -195.0 * WORLD_SCALE, -145.0 * WORLD_SCALE];
         jettiesXList.forEach(jx => {
             const overlapsX = (boatPos.x + hullXExtent >= jx - 2.0) && (boatPos.x - hullXExtent <= jx - 2.0 + 4.0);
-            const overlapsY = (boatPos.y + hullYExtent >= -175.0) && (boatPos.y - hullYExtent <= -115.0);
+            const overlapsY = (boatPos.y + hullYExtent >= -175.0 * WORLD_SCALE) && (boatPos.y - hullYExtent <= -115.0 * WORLD_SCALE);
             if (overlapsX && overlapsY && !isShipwrecked) {
                 triggerShipwreck({ type: 'quay_wall' });
             }
         });
 
         // Moored vessels collision check along jetties
-        for (let b = -168; b <= -128; b += 6.5) {
-            if (Math.abs(b - (-147.5)) > 3.0) {
+        for (let b = -168 * WORLD_SCALE; b <= -128 * WORLD_SCALE; b += 6.5 * WORLD_SCALE) {
+            if (Math.abs(b - (-147.5 * WORLD_SCALE)) > 3.0) {
                 const parkedLocs = [
-                    { x: -250.5, y: b }, { x: -239.5, y: b },
-                    { x: -200.5, y: b }, { x: -189.5, y: b },
-                    { x: -150.5, y: b }, { x: -139.5, y: b }
+                    { x: -250.5 * WORLD_SCALE, y: b }, { x: -239.5 * WORLD_SCALE, y: b },
+                    { x: -200.5 * WORLD_SCALE, y: b }, { x: -189.5 * WORLD_SCALE, y: b },
+                    { x: -150.5 * WORLD_SCALE, y: b }, { x: -139.5 * WORLD_SCALE, y: b }
                 ];
                 parkedLocs.forEach(pl => {
                     if (Math.hypot(pl.x - boatPos.x, pl.y - boatPos.y) < 2.0 && !isShipwrecked) {
@@ -1174,22 +1314,28 @@ function draw() {
                             document.getElementById('tele-status').textContent = '🔵 STATE 2: Pivoting to Alignment...';
                             document.getElementById('tele-status').style.color = '#ffaa00';
                         } else if (target.mode === 'approach') {
-                            // Angled Approach, braking into the berth
-                            cruiseSpeed = 1.6;
-                            brakeDecel = 0.3;
+                            // Angled Approach, braking into the berth. Was a
+                            // flat 1.6/-0.3 (tuned as a fraction of the old
+                            // MAX_LINEAR_FWD=6.0 baseline) — now expressed as
+                            // that same ratio of the current (real,
+                            // thrust-derived) MAX_LINEAR_FWD, so this scales
+                            // automatically if the top speed is ever retuned
+                            // again instead of drifting out of proportion.
+                            cruiseSpeed = MAX_LINEAR_FWD * DOCK_APPROACH_SPEED_RATIO;
+                            brakeDecel = DOCK_BRAKE_DECEL;
                             document.getElementById('tele-status').textContent = '🟢 STATE 3: Angled Approach...';
                             document.getElementById('tele-status').style.color = '#00ff00';
                         } else if (target.mode === 'reverse_swing') {
                             // Reverse Swing (Reverse speed + hard rudder, braking into position)
-                            cruiseSpeed = -1.3;
+                            cruiseSpeed = MAX_LINEAR_FWD * DOCK_REVERSE_SWING_SPEED_RATIO;
                             angularGain = 2.0; // hard pivot while reversing
-                            brakeDecel = 0.3;
+                            brakeDecel = DOCK_BRAKE_DECEL;
                             document.getElementById('tele-status').textContent = '🟣 STATE 4: Reversing & Swinging Stern...';
                             document.getElementById('tele-status').style.color = '#cc00ff';
                         } else if (target.mode === 'creep') {
                             // STATE 3: CREEP INSERTION, braking to a stop at the slot
-                            cruiseSpeed = 1.3;
-                            brakeDecel = 0.3;
+                            cruiseSpeed = MAX_LINEAR_FWD * DOCK_CREEP_SPEED_RATIO;
+                            brakeDecel = DOCK_BRAKE_DECEL;
                             document.getElementById('tele-status').textContent = '🟢 STATE 3: Creep Insertion...';
                             document.getElementById('tele-status').style.color = '#00ff00';
                         }
@@ -1238,10 +1384,12 @@ function draw() {
                     const targetAngular = Math.sign(yawDiff) * Math.min(MAX_ANGULAR, Math.abs(yawDiff) * angularGain);
                     currentAngular = approachVelocity(currentAngular, targetAngular, navDt);
 
-                    boatPos.yaw += currentAngular * navDt;
-                    boatPos.speed = currentLinear;
-                    boatPos.x += Math.cos(boatPos.yaw) * currentLinear * navDt;
-                    boatPos.y += Math.sin(boatPos.yaw) * currentLinear * navDt;
+                    // boatPos itself is NOT integrated here — it comes solely
+                    // from the /odom subscription (same as Mode 2), so what's
+                    // rendered/used for the next frame's dist/yawDiff is
+                    // Gazebo's real physics output, not a client-side guess.
+                    // currentLinear/currentAngular above only shape the
+                    // outgoing /cmd_vel demand.
 
                     // Hydrodynamic Roll Banking: Lean boat hull realistically into turns in 3D
                     if (boatGroup && !isShipwrecked) {
@@ -1389,7 +1537,7 @@ function draw() {
     // Main Horizontal Pier Spine: x from -265 to -125 (width 140), y from -173 to -177 (height 4). Center = (-195, -175).
     ctx.fillStyle = '#5d4037';
     // Draw Spine
-    const spineTL = rosToCanvas(-265, -173); // Top-Left in Canvas means min X, max Y (since +Y is up in ROS, -173 is "above" -177)
+    const spineTL = rosToCanvas(-265 * WORLD_SCALE, -173 * WORLD_SCALE); // Top-Left in Canvas means min X, max Y (since +Y is up in ROS, -173 is "above" -177)
     // Wait, rosToCanvas cy = height/2 - (ry - offsetY)*s. Larger ry -> smaller cy. 
     // So ry=-173 gives smaller cy (higher on screen) than ry=-177.
     // So width is 140*s, height is 4*s.
@@ -1397,10 +1545,10 @@ function draw() {
 
     // 3 Vertical Finger Jetties extending up into water
     // x = -245, -195, -145. width 4m. y = -115 to -173. height = 58m.
-    const jetties2D = [-245.0, -195.0, -145.0];
+    const jetties2D = [-245.0 * WORLD_SCALE, -195.0 * WORLD_SCALE, -145.0 * WORLD_SCALE];
     jetties2D.forEach(jx => {
         // max Y is -115. min Y is -173.
-        const jettyTL = rosToCanvas(jx - 2.0, -115.0);
+        const jettyTL = rosToCanvas(jx - 2.0, -115.0 * WORLD_SCALE);
         ctx.fillRect(jettyTL.x, jettyTL.y, 4 * s, 58 * s);
     });
 
@@ -1409,36 +1557,36 @@ function draw() {
     
     // We will draw the boats using rosToCanvas directly. Boats are 6m x 3.5m.
     // Jetty 1 & 3 Left/Right, Jetty 2 Left/Right
-    for (let b = -168; b <= -128; b += 6.5) { // y coordinates
+    for (let b = -168 * WORLD_SCALE; b <= -128 * WORLD_SCALE; b += 6.5 * WORLD_SCALE) { // y coordinates
         // Jetty 1 Left (-245 - 2 - 3.5/2 = -248.75 center? No, let's just draw them relative)
-        if (Math.abs(b - (-147.5)) > 3.0) { // Keep berth 1 empty at -147.5
-            const p = rosToCanvas(-250.5, b);
+        if (Math.abs(b - (-147.5 * WORLD_SCALE)) > 3.0) { // Keep berth 1 empty at -147.5
+            const p = rosToCanvas(-250.5 * WORLD_SCALE, b);
             ctx.fillStyle = bColors2D[Math.abs(Math.floor(b)) % bColors2D.length];
             ctx.fillRect(p.x, p.y, 3.5 * s, 6 * s); // width 3.5, height 6
         }
         // Jetty 1 Right
-        const p1r = rosToCanvas(-239.5, b);
+        const p1r = rosToCanvas(-239.5 * WORLD_SCALE, b);
         ctx.fillRect(p1r.x, p1r.y, 3.5 * s, 6 * s);
 
         // Jetty 3 Left
-        if (Math.abs(b - (-147.5)) > 3.0) { // berth 4 empty
-            const p3l = rosToCanvas(-150.5, b);
+        if (Math.abs(b - (-147.5 * WORLD_SCALE)) > 3.0) { // berth 4 empty
+            const p3l = rosToCanvas(-150.5 * WORLD_SCALE, b);
             ctx.fillStyle = bColors2D[(Math.abs(Math.floor(b)) + 3) % bColors2D.length];
             ctx.fillRect(p3l.x, p3l.y, 3.5 * s, 6 * s);
         }
         // Jetty 3 Right
-        const p3r = rosToCanvas(-139.5, b);
+        const p3r = rosToCanvas(-139.5 * WORLD_SCALE, b);
         ctx.fillRect(p3r.x, p3r.y, 3.5 * s, 6 * s);
 
         // Jetty 2 Right
-        if (Math.abs(b - (-147.5)) > 3.0) { // berth 3 empty
-            const p2r = rosToCanvas(-189.5, b);
+        if (Math.abs(b - (-147.5 * WORLD_SCALE)) > 3.0) { // berth 3 empty
+            const p2r = rosToCanvas(-189.5 * WORLD_SCALE, b);
             ctx.fillStyle = bColors2D[(Math.abs(Math.floor(b)) + 2) % bColors2D.length];
             ctx.fillRect(p2r.x, p2r.y, 3.5 * s, 6 * s);
         }
         // Jetty 2 Left
-        if (Math.abs(b - (-147.5)) > 3.0) { // berth 2 empty
-            const p2l = rosToCanvas(-200.5, b);
+        if (Math.abs(b - (-147.5 * WORLD_SCALE)) > 3.0) { // berth 2 empty
+            const p2l = rosToCanvas(-200.5 * WORLD_SCALE, b);
             ctx.fillStyle = bColors2D[Math.abs(Math.floor(b)) % bColors2D.length];
             ctx.fillRect(p2l.x, p2l.y, 3.5 * s, 6 * s);
         }
@@ -1468,7 +1616,7 @@ function draw() {
     // Label Text
     ctx.font = 'bold 10px sans-serif';
     ctx.fillStyle = '#00ffcc';
-    const marinaBase = rosToCanvas(-195, -175);
+    const marinaBase = rosToCanvas(-195 * WORLD_SCALE, -175 * WORLD_SCALE);
     ctx.fillText('⚡ 30+ PACKED MARINA GRID (<40cm TOLERANCE)', marinaBase.x - 65, marinaBase.y + 12);
     ctx.restore();
 
@@ -1671,40 +1819,40 @@ canvas.addEventListener('click', (e) => {
         const dockTypeSel = document.getElementById('dock-type-selector');
         const isParallel = dockTypeSel ? (dockTypeSel.value === 'parallel') : true;
 
-        // 1. Check Spine Pier (Horizontal, y = -175.0)
-        if (rx >= -265.0 && rx <= -125.0) {
-            if (Math.abs(ry - (-175.0)) < minDist) {
-                minDist = Math.abs(ry - (-175.0));
+        // 1. Check Spine Pier (Horizontal, y = -175.0) — positions scaled by WORLD_SCALE
+        if (rx >= -265.0 * WORLD_SCALE && rx <= -125.0 * WORLD_SCALE) {
+            if (Math.abs(ry - (-175.0 * WORLD_SCALE)) < minDist) {
+                minDist = Math.abs(ry - (-175.0 * WORLD_SCALE));
                 bestBerth = {
                     name: 'Dynamic Docking (Main Spine Pier)',
                     ros_x: rx,
-                    ros_y: isParallel ? -171.2 : -168.8,
+                    ros_y: isParallel ? -171.2 * WORLD_SCALE : -168.8 * WORLD_SCALE,
                     type: isParallel ? 'parallel' : 'slip',
                     parkedYaw: isParallel ? 0.0 : -1.57, 
                     corridor_x: isParallel ? rx - 15.0 : rx,
-                    corridor_y: -145.0,
+                    corridor_y: -145.0 * WORLD_SCALE,
                     staging_x: isParallel ? rx - 15.0 : rx,
-                    staging_y: isParallel ? -171.2 : -145.0
+                    staging_y: isParallel ? -171.2 * WORLD_SCALE : -145.0 * WORLD_SCALE
                 };
             }
         }
 
         // 2. Check Finger Jetties (Vertical, x = -245, -195, -145)
-        const jetties = [-245.0, -195.0, -145.0];
+        const jetties = [-245.0 * WORLD_SCALE, -195.0 * WORLD_SCALE, -145.0 * WORLD_SCALE];
         jetties.forEach((jx, index) => {
-            if (ry <= -115.0 && ry >= -175.0) {
+            if (ry <= -115.0 * WORLD_SCALE && ry >= -175.0 * WORLD_SCALE) {
                 // Left Face (wall at jx - 2.0)
                 if (Math.abs(rx - (jx - 2.0)) < minDist) {
                     minDist = Math.abs(rx - (jx - 2.0));
                     const targetX = isParallel ? jx - 3.6 : jx - 5.5;
                     const stagingX = isParallel ? jx - 5.5 : targetX;
-                    const openCorridorX = (index === 0) ? -265.0 : (index === 1 ? -220.0 : -170.0);
+                    const openCorridorX = (index === 0) ? -265.0 * WORLD_SCALE : (index === 1 ? -220.0 * WORLD_SCALE : -170.0 * WORLD_SCALE);
                     bestBerth = {
                         name: `Dynamic Docking (Jetty ${index+1} Left)`,
                         ros_x: targetX,
                         ros_y: ry,
                         corridor_x: openCorridorX,
-                        corridor_y: -105.0,
+                        corridor_y: -105.0 * WORLD_SCALE,
                         staging_x: stagingX,
                         staging_y: ry,
                         type: isParallel ? 'parallel' : 'slip',
@@ -1716,13 +1864,13 @@ canvas.addEventListener('click', (e) => {
                     minDist = Math.abs(rx - (jx + 2.0));
                     const targetX = isParallel ? jx + 3.6 : jx + 5.5;
                     const stagingX = isParallel ? jx + 5.5 : targetX;
-                    const openCorridorX = (index === 2) ? -125.0 : (index === 0 ? -220.0 : -170.0);
+                    const openCorridorX = (index === 2) ? -125.0 * WORLD_SCALE : (index === 0 ? -220.0 * WORLD_SCALE : -170.0 * WORLD_SCALE);
                     bestBerth = {
                         name: `Dynamic Docking (Jetty ${index+1} Right)`,
                         ros_x: targetX,
                         ros_y: ry,
                         corridor_x: openCorridorX,
-                        corridor_y: -105.0,
+                        corridor_y: -105.0 * WORLD_SCALE,
                         staging_x: stagingX,
                         staging_y: ry,
                         type: isParallel ? 'parallel' : 'slip',
@@ -1738,7 +1886,7 @@ canvas.addEventListener('click', (e) => {
         }
 
         // Check if selected spot overlaps a parked vessel on finger jetties
-        if (bestBerth.ros_y <= -128.0 && bestBerth.ros_y >= -168.0 && Math.abs(bestBerth.ros_y - (-147.5)) > 3.5) {
+        if (bestBerth.ros_y <= -128.0 * WORLD_SCALE && bestBerth.ros_y >= -168.0 * WORLD_SCALE && Math.abs(bestBerth.ros_y - (-147.5 * WORLD_SCALE)) > 3.5) {
             if (bestBerth.name.includes('Jetty')) {
                 alert("⛔ Space Occupied! A parked vessel is currently docked at this location. Please select an open spot.");
                 return;
@@ -1766,11 +1914,13 @@ canvas.addEventListener('click', (e) => {
 
     if (activeAppMode !== 1 || !currentMode) return;
 
-    // Enforce Lake Open-Water Constraints (Keep goals & buoys inside water body, r <= 285m)
+    // Enforce Lake Open-Water Constraints (Keep goals & buoys inside water body).
+    // 330 keeps the same ~5% margin inside LAKE_RADIUS's own 350 pre-scale
+    // reference that the old 285/300 pair had.
     const distFromOrigin = Math.hypot(rx, ry);
-    if (distFromOrigin > 285.0) {
-        rx = (rx / distFromOrigin) * 285.0;
-        ry = (ry / distFromOrigin) * 285.0;
+    if (distFromOrigin > 330.0 * WORLD_SCALE) {
+        rx = (rx / distFromOrigin) * (330.0 * WORLD_SCALE);
+        ry = (ry / distFromOrigin) * (330.0 * WORLD_SCALE);
     }
 
     // Keep clear of Central Island (r >= 33.0m from island center)
@@ -1846,9 +1996,9 @@ document.getElementById('btn-reset').addEventListener('click', () => {
     pathIndex = 0;
 
     // 2. Reset boat pose, speed & 3D mesh transforms back to Harbor Fairway Entrance
-    boatPos = { x: -220.0, y: -95.0, yaw: -1.57, speed: 0 };
+    boatPos = { x: -220.0 * WORLD_SCALE, y: -95.0 * WORLD_SCALE, yaw: -1.57, speed: 0 };
     if (boatGroup) {
-        boatGroup.position.set(-220.0, 0.4, 95.0);
+        boatGroup.position.set(-220.0 * WORLD_SCALE, 0.4, 95.0 * WORLD_SCALE);
         boatGroup.rotation.set(0, -1.57, 0);
     }
 
@@ -1896,6 +2046,7 @@ if (mode1Btn) {
         if (mode1Tools) mode1Tools.style.display = 'block';
         if (mode2Tools) mode2Tools.style.display = 'none';
         if (mode3Tools) mode3Tools.style.display = 'none';
+        if (dofPanel) dofPanel.style.display = 'block';
     });
 }
 
@@ -1919,6 +2070,7 @@ if (mode2Btn) {
         if (mode2Tools) mode2Tools.style.display = 'block';
         if (mode1Tools) mode1Tools.style.display = 'none';
         if (mode3Tools) mode3Tools.style.display = 'none';
+        if (dofPanel) dofPanel.style.display = 'block';
     });
 }
 
@@ -1932,6 +2084,7 @@ if (mode3Btn) {
         if (mode3Tools) mode3Tools.style.display = 'block';
         if (mode1Tools) mode1Tools.style.display = 'none';
         if (mode2Tools) mode2Tools.style.display = 'none';
+        if (dofPanel) dofPanel.style.display = 'block';
     });
 }
 
@@ -1971,7 +2124,7 @@ function startDynamicDocking(chosen) {
             const alignY = chosen.ros_y + ALIGN_WALL_MARGIN;
             dockWaypoints = [
                 { x: boatPos.x, y: boatPos.y, mode: 'transit' },
-                { x: chosen.corridor_x, y: -105.0, mode: 'transit' },
+                { x: chosen.corridor_x, y: -105.0 * WORLD_SCALE, mode: 'transit' },
                 { x: chosen.corridor_x, y: alignY, mode: 'transit' },
                 { x: chosen.corridor_x, y: alignY, mode: 'align', targetYaw: chosen.parkedYaw },
                 { x: chosen.ros_x, y: chosen.ros_y, mode: 'creep' }
@@ -1979,9 +2132,9 @@ function startDynamicDocking(chosen) {
         } else {
             dockWaypoints = [
                 { x: boatPos.x, y: boatPos.y, mode: 'transit' },
-                { x: chosen.ros_x, y: -105.0, mode: 'transit' },
-                { x: chosen.ros_x, y: -145.0, mode: 'transit' },
-                { x: chosen.ros_x, y: -145.0, mode: 'align', targetYaw: chosen.parkedYaw },
+                { x: chosen.ros_x, y: -105.0 * WORLD_SCALE, mode: 'transit' },
+                { x: chosen.ros_x, y: -145.0 * WORLD_SCALE, mode: 'transit' },
+                { x: chosen.ros_x, y: -145.0 * WORLD_SCALE, mode: 'align', targetYaw: chosen.parkedYaw },
                 { x: chosen.ros_x, y: chosen.ros_y, mode: 'creep' }
             ];
         }
@@ -1993,7 +2146,7 @@ function startDynamicDocking(chosen) {
         // 4. Align heading at berth position to match parallel/slip parkedYaw!
         dockWaypoints = [
             { x: boatPos.x, y: boatPos.y, mode: 'transit' },
-            { x: chosen.corridor_x, y: -105.0, mode: 'transit' },
+            { x: chosen.corridor_x, y: -105.0 * WORLD_SCALE, mode: 'transit' },
             { x: chosen.corridor_x, y: chosen.ros_y, mode: 'transit' },
             { x: chosen.ros_x, y: chosen.ros_y, mode: 'creep' },
             { x: chosen.ros_x, y: chosen.ros_y, mode: 'align', targetYaw: chosen.parkedYaw }
@@ -2025,16 +2178,38 @@ function sendCmdVel(linear, angular) {
     cmdVelTopic.publish(twist);
 }
 
+function publishThrust(topic, value) {
+    topic.publish(new ROSLIB.Message({ data: value }));
+}
+
 let currentLinear = 0.0;
 let currentAngular = 0.0;
-const heldAxes = new Set(); // 'fwd' | 'rev' | 'left' | 'right'
+const heldAxes = new Set(); // 'fwd' | 'rev' | 'left' | 'right' — arrow keys only
 
+// Arrow keys drive the combined boat (unchanged). W/A/R/D independently
+// command the left/right thrusters directly — see keyToThruster below.
 function keyToAxis(key) {
     switch (key) {
-        case 'w': case 'arrowup': return 'fwd';
-        case 's': case 'arrowdown': return 'rev';
-        case 'a': case 'arrowleft': return 'left';
-        case 'd': case 'arrowright': return 'right';
+        case 'arrowup': return 'fwd';
+        case 'arrowdown': return 'rev';
+        case 'arrowleft': return 'left';
+        case 'arrowright': return 'right';
+        default: return null;
+    }
+}
+
+const heldThrusterKeys = new Set(); // 'leftFwd' | 'leftRev' | 'rightFwd' | 'rightRev'
+
+// W = left thruster forward, A = left thruster reverse, R = right thruster
+// forward, D = right thruster reverse. Bypasses cmd_vel_thrust_mixer.py
+// entirely (see thrusterLoop) so this and the arrow-key combined drive never
+// both try to command the same two thrust topics in the same frame.
+function keyToThruster(key) {
+    switch (key) {
+        case 'w': return 'leftFwd';
+        case 'a': return 'leftRev';
+        case 'r': return 'rightFwd';
+        case 'd': return 'rightRev';
         default: return null;
     }
 }
@@ -2049,9 +2224,14 @@ function approachVelocity(current, target, dt) {
 
 function stopThrusters() {
     heldAxes.clear();
+    heldThrusterKeys.clear();
     currentLinear = 0.0;
     currentAngular = 0.0;
     sendCmdVel(0.0, 0.0);
+    publishThrust(leftThrustTopic, 0.0);
+    publishThrust(rightThrustTopic, 0.0);
+    lastPublishedLeftThrust = 0.0;
+    lastPublishedRightThrust = 0.0;
 }
 
 // On-screen D-pad: press-and-hold, matching keyboard behavior
@@ -2078,26 +2258,83 @@ window.addEventListener('keydown', (e) => {
     if (e.key === ' ') { stopThrusters(); return; }
     const axis = keyToAxis(e.key.toLowerCase());
     if (axis) heldAxes.add(axis);
+    const thrusterKey = keyToThruster(e.key.toLowerCase());
+    if (thrusterKey) heldThrusterKeys.add(thrusterKey);
 });
 
 window.addEventListener('keyup', (e) => {
     if (activeAppMode !== 2) return;
     const axis = keyToAxis(e.key.toLowerCase());
     if (axis) heldAxes.delete(axis);
+    const thrusterKey = keyToThruster(e.key.toLowerCase());
+    if (thrusterKey) heldThrusterKeys.delete(thrusterKey);
 });
 
 let lastThrusterTime = performance.now();
 let lastPublishedLinear = 0.0;
 let lastPublishedAngular = 0.0;
+let lastPublishedLeftThrust = 0.0;
+let lastPublishedRightThrust = 0.0;
 
 function thrusterLoop() {
     const now = performance.now();
     const dt = Math.min((now - lastThrusterTime) / 1000, 0.1); // clamp so a stalled tab doesn't jump velocity
     lastThrusterTime = now;
 
-    if (activeAppMode === 2) {
+    if (activeAppMode === 2 && heldThrusterKeys.size > 0) {
+        // Independent per-thruster control takes priority over the combined
+        // arrow-key drive whenever any W/A/R/D is held, so the two schemes
+        // never both publish to the same thrust topics in the same frame.
+        // Instant on/off, no ramp — real Gazebo physics does all the
+        // shaping, same principle as the combined drive's instant-cutoff
+        // fix below.
+        const leftThrust = heldThrusterKeys.has('leftFwd') ? THRUSTER_MAX_FWD_N
+            : heldThrusterKeys.has('leftRev') ? THRUSTER_MIN_REV_N : 0.0;
+        const rightThrust = heldThrusterKeys.has('rightFwd') ? THRUSTER_MAX_FWD_N
+            : heldThrusterKeys.has('rightRev') ? THRUSTER_MIN_REV_N : 0.0;
+        publishThrust(leftThrustTopic, leftThrust);
+        publishThrust(rightThrustTopic, rightThrust);
+        lastPublishedLeftThrust = leftThrust;
+        lastPublishedRightThrust = rightThrust;
+
+        const teleStatusEl = document.getElementById('tele-status');
+        if (teleStatusEl) {
+            teleStatusEl.textContent = '🎛️ Independent Thruster Control';
+            teleStatusEl.style.color = '#ff66cc';
+        }
+        document.getElementById('tele-x').textContent = boatPos.x.toFixed(2);
+        document.getElementById('tele-y').textContent = boatPos.y.toFixed(2);
+        document.getElementById('tele-speed').textContent = boatPos.speed.toFixed(2);
+    } else if (activeAppMode === 2) {
+        // Just left independent-thruster control (or never entered it this
+        // session) — send one final zero so the two raw thrust topics don't
+        // stay pinned at their last commanded value. The Thruster plugin
+        // holds the last command indefinitely; there's no watchdog timeout.
+        if (lastPublishedLeftThrust !== 0.0 || lastPublishedRightThrust !== 0.0) {
+            publishThrust(leftThrustTopic, 0.0);
+            publishThrust(rightThrustTopic, 0.0);
+            lastPublishedLeftThrust = 0.0;
+            lastPublishedRightThrust = 0.0;
+        }
+
+        // FWD/REV demand ceilings are now real hardware-derived equilibrium
+        // speeds (see MAX_LINEAR_FWD/MAX_LINEAR_REV above), not arbitrary
+        // software targets — no reason left to uncap these for experiments,
+        // real physics and the JS ceiling should now roughly agree.
         const targetLinear = heldAxes.has('fwd') ? MAX_LINEAR_FWD : heldAxes.has('rev') ? MAX_LINEAR_REV : 0.0;
-        const targetAngular = heldAxes.has('left') ? MAX_ANGULAR : heldAxes.has('right') ? -MAX_ANGULAR : 0.0;
+        // EXPERIMENT (still active): turn demand uncapped (was MAX_ANGULAR =
+        // 1.2) — same "let real physics decide" test already run on forward
+        // speed. Once demand exceeds the thruster caps, one side saturates
+        // at max_thrust_cmd=51.5N and the other at min_thrust_cmd=-40.2N
+        // (exhibition_water.sdf, now real T200-at-16V values — see that
+        // file's derivation comment), giving a max differential torque of
+        // 0.38*(51.5-(-40.2))=34.8 N*m; balanced against this boat's yaw
+        // damping (nR=12, nRR=0), the real physics ceiling works out to
+        // roughly 34.8/12 ≈ 2.9 rad/s — this target (15.0) is comfortably
+        // past that so the real spin rate, not this number, is what
+        // determines the outcome. Revert to MAX_ANGULAR once you've seen
+        // the result.
+        const targetAngular = heldAxes.has('left') ? 15.0 : heldAxes.has('right') ? -15.0 : 0.0;
 
         // Ramp UP toward a held throttle position (eases the lever open over
         // THRUST_RAMP_RATE), but cut instantly to 0 on release instead of

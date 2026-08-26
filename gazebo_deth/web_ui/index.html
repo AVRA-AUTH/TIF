@@ -41,17 +41,18 @@
 
                 <div id="mode2-tools" style="display: none;">
                     <h3>Manual Joystick Controls</h3>
-                    <p class="help-text">Use <b>W A S D</b> or <b>Arrow Keys</b> on your keyboard to drive the ASV boat
-                        in Gazebo!</p>
+                    <p class="help-text">Use the <b>Arrow Keys</b> to drive the ASV boat as a whole (or the buttons below).</p>
                     <div class="dpad">
-                        <button id="btn-up" class="dbtn">▲ (W)</button>
+                        <button id="btn-up" class="dbtn">▲ (↑)</button>
                         <div class="dpad-row">
-                            <button id="btn-left" class="dbtn">◄ (A)</button>
+                            <button id="btn-left" class="dbtn">◄ (←)</button>
                             <button id="btn-stop" class="dbtn stop">STOP</button>
-                            <button id="btn-right" class="dbtn">► (D)</button>
+                            <button id="btn-right" class="dbtn">► (→)</button>
                         </div>
-                        <button id="btn-down" class="dbtn">▼ (S)</button>
+                        <button id="btn-down" class="dbtn">▼ (↓)</button>
                     </div>
+                    <p class="help-text" style="margin-top: 0.8rem;">Or command each thruster directly:
+                        <b>W</b>/<b>A</b> = left thruster fwd/rev, <b>R</b>/<b>D</b> = right thruster fwd/rev.</p>
                 </div>
 
                 <div id="mode3-tools" style="display: none;">
@@ -78,6 +79,18 @@
                     <p>X: <span id="tele-x">0.00</span> m</p>
                     <p>Y: <span id="tele-y">0.00</span> m</p>
                     <p>Speed: <span id="tele-speed">0.00</span> m/s</p>
+                </div>
+
+                <div class="telemetry" id="dof-panel" style="display: none;">
+                    <h4>Degrees of Freedom (real /odom)</h4>
+                    <div class="dof-row">
+                        <span class="dof-label">Surge (fwd/rev) <span id="dof-surge-val">0.00</span> m/s</span>
+                        <canvas id="dof-surge-chart" width="220" height="36"></canvas>
+                    </div>
+                    <div class="dof-row">
+                        <span class="dof-label">Yaw Rate <span id="dof-yawrate-val">0.00</span> rad/s</span>
+                        <canvas id="dof-yawrate-chart" width="220" height="36"></canvas>
+                    </div>
                 </div>
             </div>
 
