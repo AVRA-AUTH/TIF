@@ -314,15 +314,57 @@ function isHeadingTowardIsland(direction) {
     return (moveX * dx + moveY * dy) < 0; // negative dot with the outward radial vector = closing in
 }
 
-// Combines both graduated boundaries (island keep-out AND shoreline) into
-// one speed ceiling for `direction`: only the boundary(ies) that direction
-// is actually closing in on contribute a cap, so the escape direction away
-// from either one is always left at rawMax. Returns a magnitude (always
-// >= 0); the caller applies the sign.
+// Marina (pier + 3 finger jetties) equivalent of maxSpeedNearIsland() /
+// maxSpeedNearShore() — same graduated-braking idea, but the marina isn't a
+// single circle, so this measures point-to-rectangle distance to the pier
+// deck and each jetty instead of point-to-point. Reads MARINA_PIER_*/
+// JETTY_* (defined further down this file, next to the 3D mesh that also
+// reads them — safe, since this is only ever called after the whole script
+// has run once). Returns 0 (already touching/inside) or a real clearance in
+// meters; 0 clearance anywhere is fine, same "min over every candidate
+// obstacle" shape as isTouchingObstacleAt.
+function distanceToMarinaStructure(x, y) {
+    let minDist = Infinity;
+    const pierDx = x < MARINA_PIER_X_MIN ? MARINA_PIER_X_MIN - x : Math.max(0, x - MARINA_PIER_X_MAX);
+    const pierDy = Math.max(0, y - MARINA_PIER_Y);
+    minDist = Math.min(minDist, Math.hypot(pierDx, pierDy));
+    for (const jx of JETTY_X_LIST) {
+        const dx = Math.max(0, Math.abs(x - jx) - JETTY_HALF_WIDTH);
+        const dy = y > JETTY_Y_NEAR ? y - JETTY_Y_NEAR : Math.max(0, JETTY_Y_FAR - y);
+        minDist = Math.min(minDist, Math.hypot(dx, dy));
+    }
+    return minDist;
+}
+function maxSpeedNearMarina() {
+    const d = distanceToMarinaStructure(boatPos.x, boatPos.y);
+    return d <= 0 ? 0 : Math.sqrt(2 * ISLAND_BRAKE_DECEL * d); // reuses the same gentle decel as the island/shore
+}
+// Direction-aware companion, same purpose as isHeadingTowardIsland()/
+// isHeadingTowardShore() above — but since the marina isn't a single point,
+// this compares distanceToMarinaStructure() before and after a small step
+// instead of a radial dot product: closing in on ANY part of the structure
+// (pier or any jetty) counts, whichever one is nearest.
+function isHeadingTowardMarina(direction) {
+    const d0 = distanceToMarinaStructure(boatPos.x, boatPos.y);
+    if (d0 > 15) return false; // cheap short-circuit far from the marina
+    const stepX = boatPos.x + direction * Math.cos(boatPos.yaw) * 0.5;
+    const stepY = boatPos.y + direction * Math.sin(boatPos.yaw) * 0.5;
+    return distanceToMarinaStructure(stepX, stepY) < d0;
+}
+
+// Combines all three graduated boundaries (island keep-out, shoreline, and
+// the marina dock structure) into one speed ceiling for `direction`: only
+// the boundary(ies) that direction is actually closing in on contribute a
+// cap, so the escape direction away from any of them is always left at
+// rawMax. Returns a magnitude (always >= 0); the caller applies the sign.
+// Mode 2 (manual driving) only — Mode 1/3's autonomous docking keeps its
+// own hand-tuned approach/creep speeds and never calls this, so this can't
+// fight the docking state machine.
 function boundaryCappedSpeed(direction, rawMax) {
     let cap = rawMax;
     if (isHeadingTowardIsland(direction)) cap = Math.min(cap, maxSpeedNearIsland());
     if (isHeadingTowardShore(direction)) cap = Math.min(cap, maxSpeedNearShore());
+    if (isHeadingTowardMarina(direction)) cap = Math.min(cap, maxSpeedNearMarina());
     return cap;
 }
 
@@ -365,16 +407,16 @@ function isTouchingObstacleAt(x, y, yaw) {
     const hullXExtent = Math.abs(Math.cos(yaw)) * 2.8 + Math.abs(Math.sin(yaw)) * 0.8;
     const hullYExtent = Math.abs(Math.sin(yaw)) * 2.8 + Math.abs(Math.cos(yaw)) * 0.8;
 
-    // Main Spine Pier (y <= -173.0, x from -265.0 to -125.0) — positions scaled by WORLD_SCALE
-    if (y - hullYExtent <= -173.0 * WORLD_SCALE && x + hullXExtent >= -265.0 * WORLD_SCALE && x - hullXExtent <= -125.0 * WORLD_SCALE) {
+    // Main Spine Pier — canonical geometry (see MARINA_PIER_* consts, defined
+    // near the 3D mesh that also reads them, further down this file).
+    if (y - hullYExtent <= MARINA_PIER_Y && x + hullXExtent >= MARINA_PIER_X_MIN && x - hullXExtent <= MARINA_PIER_X_MAX) {
         return true;
     }
 
-    // Finger Jetties (x = -245, -195, -145, width = 4m [jx - 2.0, jx + 2.0], y in [-175, -115])
-    const jettiesXList = [-245.0 * WORLD_SCALE, -195.0 * WORLD_SCALE, -145.0 * WORLD_SCALE];
-    for (const jx of jettiesXList) {
-        const overlapsX = (x + hullXExtent >= jx - 2.0) && (x - hullXExtent <= jx - 2.0 + 4.0);
-        const overlapsY = (y + hullYExtent >= -175.0 * WORLD_SCALE) && (y - hullYExtent <= -115.0 * WORLD_SCALE);
+    // Finger Jetties — canonical geometry (JETTY_X_LIST/JETTY_HALF_WIDTH/JETTY_Y_NEAR/JETTY_Y_FAR).
+    for (const jx of JETTY_X_LIST) {
+        const overlapsX = (x + hullXExtent >= jx - JETTY_HALF_WIDTH) && (x - hullXExtent <= jx + JETTY_HALF_WIDTH);
+        const overlapsY = (y + hullYExtent >= JETTY_Y_FAR) && (y - hullYExtent <= JETTY_Y_NEAR);
         if (overlapsX && overlapsY) return true;
     }
 
@@ -761,24 +803,54 @@ islandGroup.add(createTree(2, -8, 1.3));
 islandGroup.position.set(ISLAND_X, 0, -ISLAND_Y);
 scene.add(islandGroup);
 
+// Canonical marina dock geometry — single source of truth for the pier +
+// 3 finger jetties, read by the 3D mesh, the 2D map draw, the hard hull
+// collision (isTouchingObstacleAt), the pathfinder (isInsideMarinaStructure),
+// and the Mode 3 dynamic-docking click handler. These used to be four/five
+// separately hand-copied literal numbers that drifted out of sync — the 3D
+// mesh and 2D map each scaled position by WORLD_SCALE but left their SIZE
+// literals unscaled, rendering a pier/jetty far bigger than what the
+// collision/pathfinding system (which scaled both consistently) actually
+// protected — "the ship flows on top of the wood." Fixing that here, once.
+const MARINA_PIER_X_MIN = -265.0 * WORLD_SCALE;
+const MARINA_PIER_X_MAX = -125.0 * WORLD_SCALE;
+const MARINA_PIER_Y = -173.0 * WORLD_SCALE;    // north face, toward open water
+const MARINA_PIER_THICKNESS = 4.0;             // unscaled — a real structural thickness, not a layout span (same reasoning as JETTY_HALF_WIDTH below)
+const JETTY_X_LIST = [-245.0, -195.0, -145.0].map(x => x * WORLD_SCALE);
+const JETTY_HALF_WIDTH = 2.0;                  // unscaled — matches the existing hull-collision margin
+const JETTY_Y_NEAR = -115.0 * WORLD_SCALE;     // open-water mouth
+const JETTY_Y_FAR = -175.0 * WORLD_SCALE;      // pier-connected end (slightly past MARINA_PIER_Y so there's no gap)
+
 // 3B. Ultra-Packed Real Marina Grid (30+ Vessels Packed Side-by-Side with 40cm Ultra-Small Tolerances)
 const marinaGroup = new THREE.Group();
 
-// Main Horizontal Floating Spine Pier (z = 175.0, ROS y = -175.0)
+// Main Horizontal Floating Spine Pier — size AND position both derived from
+// the canonical MARINA_PIER_* constants above, so this mesh can no longer
+// drift out of sync with the collision/pathfinding geometry the way the old
+// hardcoded BoxGeometry(130, 0.8, 6) did (that 130/6 were never scaled by
+// WORLD_SCALE while the position was, rendering a pier far bigger than what
+// actually blocked the boat).
 const pierMat = new THREE.MeshLambertMaterial({ color: 0x5d4037, roughness: 0.8 });
-const mainPier = new THREE.Mesh(new THREE.BoxGeometry(130, 0.8, 6), pierMat);
-mainPier.position.set(-195 * WORLD_SCALE, 0.4, 175 * WORLD_SCALE);
+const pierLength = MARINA_PIER_X_MAX - MARINA_PIER_X_MIN;
+const pierCenterX = (MARINA_PIER_X_MIN + MARINA_PIER_X_MAX) / 2;
+const pierCenterY = MARINA_PIER_Y - MARINA_PIER_THICKNESS / 2; // ROS y (south of the north face)
+const mainPier = new THREE.Mesh(new THREE.BoxGeometry(pierLength, 0.8, MARINA_PIER_THICKNESS), pierMat);
+mainPier.position.set(pierCenterX, 0.4, -pierCenterY); // Three.js z = -ROS y
 marinaGroup.add(mainPier);
 
-// 3 Vertical Finger Jetties extending perpendicularly up into water (z = 175 down to z = 115)
-const jettiesX = [-245.0 * WORLD_SCALE, -195.0 * WORLD_SCALE, -145.0 * WORLD_SCALE];
-jettiesX.forEach(jx => {
-    const jetty = new THREE.Mesh(new THREE.BoxGeometry(4, 0.8, 62), pierMat);
-    jetty.position.set(jx, 0.4, 144 * WORLD_SCALE);
+// 3 Vertical Finger Jetties extending perpendicularly up into water — same
+// derive-from-constants fix as the pier above (was BoxGeometry(4, 0.8, 62),
+// a real 62m-long jetty when the collision system only protected 24m).
+const jettyWidth = JETTY_HALF_WIDTH * 2;
+const jettyLength = JETTY_Y_NEAR - JETTY_Y_FAR;
+const jettyCenterY = (JETTY_Y_NEAR + JETTY_Y_FAR) / 2; // ROS y
+JETTY_X_LIST.forEach(jx => {
+    const jetty = new THREE.Mesh(new THREE.BoxGeometry(jettyWidth, 0.8, jettyLength), pierMat);
+    jetty.position.set(jx, 0.4, -jettyCenterY);
     marinaGroup.add(jetty);
 
-    // Mooring Pylons along each finger jetty
-    for (let pz = 115 * WORLD_SCALE; pz <= 173 * WORLD_SCALE; pz += 6.5 * WORLD_SCALE) {
+    // Mooring Pylons along each finger jetty, spanning its corrected length
+    for (let pz = -JETTY_Y_NEAR; pz <= -JETTY_Y_FAR; pz += 6.5 * WORLD_SCALE) {
         const pylonL = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 4.5, 8), new THREE.MeshLambertMaterial({ color: 0x3e2723 }));
         pylonL.position.set(jx - 1.8, 0.9, pz);
         const pylonR = pylonL.clone();
@@ -825,8 +897,13 @@ const zList = [168, 161.5, 155, 148.5, 142, 135.5, 129, 122.5].map(z => z * WORL
 const colorsList = [0x1d3557, 0x2a9d8f, 0xe63946, 0x457b9d, 0x0f4c5c, 0x3d5a80, 0x9b5de5, 0xf15bb5];
 const typesList = ['yacht', 'sailboat', 'speedboat', 'yacht', 'sailboat', 'speedboat', 'yacht', 'sailboat'];
 
-// Populate Jetty 1 (Left Jetty at x: -245.0) - Open Berth #1 at z: 142.0
+// Populate Jetty 1 (Left Jetty at x: -245.0) - Open Berth #1 at z: 142.0.
+// Thinned to every other slot (idx % 2 === 0), on top of the existing named
+// berth gap, per explicit request for more open choices — the marina used
+// to leave only the 4 named availableBerths open with every other slot
+// packed solid.
 zList.forEach((z, idx) => {
+    if (idx % 2 !== 0) return;
     if (Math.abs(z - 142.0 * WORLD_SCALE) > 3.0) {
         marinaGroup.add(createMooredBoat(-251 * WORLD_SCALE, z, colorsList[idx % colorsList.length], typesList[idx % typesList.length]));
     }
@@ -834,26 +911,26 @@ zList.forEach((z, idx) => {
 });
 
 // Populate Jetty 2 (Middle Jetty at x: -195.0) - Open Berth #2 at z: 142.2 (Tight 40cm Gap) and Open Berth #3 at z: 142.2 (Right Side)
+// Thinned to every other hand-placed slot, same reasoning as Jetty 1 above.
 marinaGroup.add(createMooredBoat(-201 * WORLD_SCALE, 168 * WORLD_SCALE, 0xf8f9fa, 'yacht'));
-marinaGroup.add(createMooredBoat(-201 * WORLD_SCALE, 161.5 * WORLD_SCALE, 0x2a9d8f, 'sailboat'));
 marinaGroup.add(createMooredBoat(-201 * WORLD_SCALE, 155 * WORLD_SCALE, 0x0f4c5c, 'speedboat'));
-marinaGroup.add(createMooredBoat(-201 * WORLD_SCALE, 148.5 * WORLD_SCALE, 0xe63946, 'yacht')); // TOP BOUNDARY OF BERTH #2
 
 // ===> OPEN BERTH #2: X: -201.0, Y: -142.2 (z = 142.2) <=== (ROS coords, pre-WORLD_SCALE)
 
 marinaGroup.add(createMooredBoat(-201 * WORLD_SCALE, 135.9 * WORLD_SCALE, 0x1d3557, 'yacht')); // BOTTOM BOUNDARY OF BERTH #2
-marinaGroup.add(createMooredBoat(-201 * WORLD_SCALE, 129.4 * WORLD_SCALE, 0x37474f, 'sailboat'));
 marinaGroup.add(createMooredBoat(-201 * WORLD_SCALE, 122.9 * WORLD_SCALE, 0x457b9d, 'speedboat'));
 
-// Right side berths of Jetty 2 - Open Berth #3 at z: 142.2
+// Right side berths of Jetty 2 - Open Berth #3 at z: 142.2 — thinned to every other slot
 zList.forEach((z, idx) => {
+    if (idx % 2 !== 0) return;
     if (Math.abs(z - 142.2 * WORLD_SCALE) > 3.0) {
         marinaGroup.add(createMooredBoat(-189 * WORLD_SCALE, z, colorsList[(idx + 3) % colorsList.length], typesList[idx % typesList.length]));
     }
 });
 
-// Populate Jetty 3 (Right Jetty at x: -145.0) - Open Berth #4 at z: 142.0
+// Populate Jetty 3 (Right Jetty at x: -145.0) - Open Berth #4 at z: 142.0 — thinned to every other slot
 zList.forEach((z, idx) => {
+    if (idx % 2 !== 0) return;
     if (Math.abs(z - 142.0 * WORLD_SCALE) > 3.0) {
         marinaGroup.add(createMooredBoat(-139 * WORLD_SCALE, z, colorsList[(idx + 1) % colorsList.length], typesList[(idx + 2) % typesList.length]));
     }
@@ -1162,8 +1239,8 @@ const SHORE_MARGIN = 4.0;  // Keep-out band inside LAKE_RADIUS, off-limits to ro
 // one checked this exact rectangular shape, the other blocked a plain circle
 // of a different, unit-mismatched size around the marina's center).
 function isInsideMarinaStructure(x, y) {
-    // Main Spine Pier Wall (solid deck, y <= -173.0 between x = -265 and -125)
-    if (y <= -173.0 * WORLD_SCALE && x >= -265.0 * WORLD_SCALE && x <= -125.0 * WORLD_SCALE) return true;
+    // Main Spine Pier Wall — canonical geometry (MARINA_PIER_* consts).
+    if (y <= MARINA_PIER_Y && x >= MARINA_PIER_X_MIN && x <= MARINA_PIER_X_MAX) return true;
     // 3 Finger Jetties (2.5m clearance around each jetty centerline, y = -115 to -175)
     // 5.5m half-width, not the jetty's own 2.0m — path planning treats the
     // boat as a point, but isTouchingObstacle()'s real hull-collision check
@@ -1173,9 +1250,8 @@ function isInsideMarinaStructure(x, y) {
     // left the real hull enough to clip the jetty while turning even though
     // the plan itself was "clear" — this matches SAFETY_RADIUS (used for
     // every other obstacle) instead of understating it.
-    const jettiesX = [-245.0 * WORLD_SCALE, -195.0 * WORLD_SCALE, -145.0 * WORLD_SCALE];
-    for (const jx of jettiesX) {
-        if (Math.abs(x - jx) < 5.5 && y <= -115.0 * WORLD_SCALE && y >= -175.0 * WORLD_SCALE) return true;
+    for (const jx of JETTY_X_LIST) {
+        if (Math.abs(x - jx) < 5.5 && y <= JETTY_Y_NEAR && y >= JETTY_Y_FAR) return true;
     }
     return false;
 }
@@ -1784,63 +1860,37 @@ function draw() {
     ctx.save();
     const s = mapScale;
 
-    // Main Horizontal Pier Spine: x from -265 to -125 (width 140), y from -173 to -177 (height 4). Center = (-195, -175).
+    // Main Horizontal Pier Spine — drawn from the same canonical MARINA_PIER_*
+    // constants (and the pierLength derived from them) the 3D mesh and the
+    // collision/pathfinding checks use, instead of separate hardcoded
+    // width/height literals that used to draw this at the pre-WORLD_SCALE
+    // size (140/58 real meters) regardless of how compressed the rest of
+    // the map is — the actual bug behind "the map doesn't match the camera."
     ctx.fillStyle = '#5d4037';
-    // Draw Spine
-    const spineTL = rosToCanvas(-265 * WORLD_SCALE, -173 * WORLD_SCALE); // Top-Left in Canvas means min X, max Y (since +Y is up in ROS, -173 is "above" -177)
-    // Wait, rosToCanvas cy = height/2 - (ry - offsetY)*s. Larger ry -> smaller cy. 
-    // So ry=-173 gives smaller cy (higher on screen) than ry=-177.
-    // So width is 140*s, height is 4*s.
-    ctx.fillRect(spineTL.x, spineTL.y, 140 * s, 4 * s);
+    const spineTL = rosToCanvas(MARINA_PIER_X_MIN, MARINA_PIER_Y); // top-left = min X, max Y (larger ROS y draws higher on screen)
+    ctx.fillRect(spineTL.x, spineTL.y, pierLength * s, MARINA_PIER_THICKNESS * s);
 
-    // 3 Vertical Finger Jetties extending up into water
-    // x = -245, -195, -145. width 4m. y = -115 to -173. height = 58m.
-    const jetties2D = [-245.0 * WORLD_SCALE, -195.0 * WORLD_SCALE, -145.0 * WORLD_SCALE];
-    jetties2D.forEach(jx => {
-        // max Y is -115. min Y is -173.
-        const jettyTL = rosToCanvas(jx - 2.0, -115.0 * WORLD_SCALE);
-        ctx.fillRect(jettyTL.x, jettyTL.y, 4 * s, 58 * s);
+    // 3 Vertical Finger Jetties extending up into water — same fix.
+    JETTY_X_LIST.forEach(jx => {
+        const jettyTL = rosToCanvas(jx - JETTY_HALF_WIDTH, JETTY_Y_NEAR); // top-left = min X, max Y
+        ctx.fillRect(jettyTL.x, jettyTL.y, jettyWidth * s, jettyLength * s);
     });
 
-    // Draw Moored Ships Along All Jetties (Leaving 4 Open Berths!)
+    // Draw Moored Ships Along All Jetties — reads the REAL entities array
+    // (isParkedShip, populated by createMooredBoat() above) instead of a
+    // separately hardcoded loop over synthetic positions. That old loop
+    // always drew every slot regardless of what was actually spawned in the
+    // 3D scene, so thinning the moored fleet there (fewer boats, more open
+    // choices) would otherwise have left the 2D map showing boats that no
+    // longer exist — the same "map doesn't match the camera" bug, just for
+    // moored boats instead of the pier/jetty structure.
     const bColors2D = ['#1d3557', '#2a9d8f', '#e63946', '#457b9d', '#0f4c5c', '#3d5a80', '#9b5de5', '#f15bb5'];
-    
-    // We will draw the boats using rosToCanvas directly. Boats are 6m x 3.5m.
-    // Jetty 1 & 3 Left/Right, Jetty 2 Left/Right
-    for (let b = -168 * WORLD_SCALE; b <= -128 * WORLD_SCALE; b += 6.5 * WORLD_SCALE) { // y coordinates
-        // Jetty 1 Left (-245 - 2 - 3.5/2 = -248.75 center? No, let's just draw them relative)
-        if (Math.abs(b - (-147.5 * WORLD_SCALE)) > 3.0) { // Keep berth 1 empty at -147.5
-            const p = rosToCanvas(-250.5 * WORLD_SCALE, b);
-            ctx.fillStyle = bColors2D[Math.abs(Math.floor(b)) % bColors2D.length];
-            ctx.fillRect(p.x, p.y, 3.5 * s, 6 * s); // width 3.5, height 6
-        }
-        // Jetty 1 Right
-        const p1r = rosToCanvas(-239.5 * WORLD_SCALE, b);
-        ctx.fillRect(p1r.x, p1r.y, 3.5 * s, 6 * s);
-
-        // Jetty 3 Left
-        if (Math.abs(b - (-147.5 * WORLD_SCALE)) > 3.0) { // berth 4 empty
-            const p3l = rosToCanvas(-150.5 * WORLD_SCALE, b);
-            ctx.fillStyle = bColors2D[(Math.abs(Math.floor(b)) + 3) % bColors2D.length];
-            ctx.fillRect(p3l.x, p3l.y, 3.5 * s, 6 * s);
-        }
-        // Jetty 3 Right
-        const p3r = rosToCanvas(-139.5 * WORLD_SCALE, b);
-        ctx.fillRect(p3r.x, p3r.y, 3.5 * s, 6 * s);
-
-        // Jetty 2 Right
-        if (Math.abs(b - (-147.5 * WORLD_SCALE)) > 3.0) { // berth 3 empty
-            const p2r = rosToCanvas(-189.5 * WORLD_SCALE, b);
-            ctx.fillStyle = bColors2D[(Math.abs(Math.floor(b)) + 2) % bColors2D.length];
-            ctx.fillRect(p2r.x, p2r.y, 3.5 * s, 6 * s);
-        }
-        // Jetty 2 Left
-        if (Math.abs(b - (-147.5 * WORLD_SCALE)) > 3.0) { // berth 2 empty
-            const p2l = rosToCanvas(-200.5 * WORLD_SCALE, b);
-            ctx.fillStyle = bColors2D[Math.abs(Math.floor(b)) % bColors2D.length];
-            ctx.fillRect(p2l.x, p2l.y, 3.5 * s, 6 * s);
-        }
-    }
+    entities.forEach(ent => {
+        if (!ent.isParkedShip) return;
+        const p = rosToCanvas(ent.ros_x, ent.ros_y);
+        ctx.fillStyle = bColors2D[Math.abs(Math.floor(ent.ros_x * 10 + ent.ros_y)) % bColors2D.length];
+        ctx.fillRect(p.x - (3.5 * s) / 2, p.y - (6 * s) / 2, 3.5 * s, 6 * s); // width 3.5, height 6, centered on the boat's real position
+    });
 
     // Draw Dynamic Target Berth Marker on 2D Map if active
     if (activeAppMode === 3 && plannedPath && plannedPath.length > 0) {
@@ -2064,8 +2114,8 @@ canvas.addEventListener('click', (e) => {
         const dockTypeSel = document.getElementById('dock-type-selector');
         const isParallel = dockTypeSel ? (dockTypeSel.value === 'parallel') : true;
 
-        // 1. Check Spine Pier (Horizontal, y = -175.0) — positions scaled by WORLD_SCALE
-        if (rx >= -265.0 * WORLD_SCALE && rx <= -125.0 * WORLD_SCALE) {
+        // 1. Check Spine Pier (Horizontal, y = -175.0) — canonical MARINA_PIER_* bounds
+        if (rx >= MARINA_PIER_X_MIN && rx <= MARINA_PIER_X_MAX) {
             if (Math.abs(ry - (-175.0 * WORLD_SCALE)) < minDist) {
                 minDist = Math.abs(ry - (-175.0 * WORLD_SCALE));
                 bestBerth = {
@@ -2082,10 +2132,9 @@ canvas.addEventListener('click', (e) => {
             }
         }
 
-        // 2. Check Finger Jetties (Vertical, x = -245, -195, -145)
-        const jetties = [-245.0 * WORLD_SCALE, -195.0 * WORLD_SCALE, -145.0 * WORLD_SCALE];
-        jetties.forEach((jx, index) => {
-            if (ry <= -115.0 * WORLD_SCALE && ry >= -175.0 * WORLD_SCALE) {
+        // 2. Check Finger Jetties (Vertical, x = -245, -195, -145) — canonical JETTY_* bounds
+        JETTY_X_LIST.forEach((jx, index) => {
+            if (ry <= JETTY_Y_NEAR && ry >= JETTY_Y_FAR) {
                 // Left Face (wall at jx - 2.0)
                 if (Math.abs(rx - (jx - 2.0)) < minDist) {
                     minDist = Math.abs(rx - (jx - 2.0));
