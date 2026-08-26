@@ -58,8 +58,12 @@
       <!-- Dropped slightly above the settled draft computed for the Surface
            plugin below (20kg boat, two 0.10m-radius demi-hulls) — physics
            settles it onto the water in the first sim second rather than
-           needing an exact starting waterline. -->
-      <pose>0 0 0.2 0 0 0</pose>
+           needing an exact starting waterline.
+           x/y/yaw = Harbor Fairway Entrance (matches DOCK_ENTRANCE_X/Y in
+           web_ui/app.js and HARBOR_X/Y/YAW in obstacle_spawner.py) — world
+           origin (0,0), used previously, is where the island sits, so the
+           boat used to spawn already aground on it. -->
+      <pose>-88.0 -38.0 0.2 0 0 -1.57</pose>
       <link name="base_link">
         <inertial>
           <mass>20.0</mass>

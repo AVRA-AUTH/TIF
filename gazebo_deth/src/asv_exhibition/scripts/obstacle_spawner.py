@@ -4,7 +4,16 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
 import json
+import math
 import subprocess
+
+# Harbor Fairway Entrance — the one "known safe" pose every mode/reset in the
+# web UI converges on (matches DOCK_ENTRANCE_X/Y in web_ui/app.js). Resetting
+# to gazebo world origin (0,0) used to drop the boat right on the island,
+# which sits at that same origin.
+HARBOR_X = -88.0
+HARBOR_Y = -38.0
+HARBOR_YAW = -1.57
 
 class ObstacleSpawner(Node):
     def __init__(self):
@@ -20,6 +29,20 @@ class ObstacleSpawner(Node):
             self.spawn_callback,
             10
         )
+
+    def _set_boat_pose(self, x, y, yaw):
+        # Yaw-only rotation -> quaternion (roll = pitch = 0)
+        qw = math.cos(yaw / 2.0)
+        qz = math.sin(yaw / 2.0)
+        cmd = [
+            'gz', 'service',
+            '-s', '/world/exhibition_water_world/set_pose',
+            '--reqtype', 'gz.msgs.Pose',
+            '--reptype', 'gz.msgs.Boolean',
+            '--timeout', '1000',
+            '--req', f'name: "asv_boat" position {{ x: {x} y: {y} z: 0.2 }} orientation {{ w: {qw} z: {qz} }}'
+        ]
+        subprocess.Popen(cmd)
 
     def spawn_callback(self, msg):
         try:
@@ -44,16 +67,19 @@ class ObstacleSpawner(Node):
 
                 self.spawned_ids.clear()
 
-                # 2. Reset boat pose to origin in Gazebo
-                reset_pose_cmd = [
-                    'gz', 'service',
-                    '-s', '/world/exhibition_water_world/set_pose',
-                    '--reqtype', 'gz.msgs.Pose',
-                    '--reptype', 'gz.msgs.Boolean',
-                    '--timeout', '1000',
-                    '--req', 'name: "asv_boat" position { x: 0 y: 0 z: 0.2 } orientation { w: 1 }'
-                ]
-                subprocess.Popen(reset_pose_cmd)
+                # 2. Reset boat pose back to the Harbor Fairway Entrance in Gazebo
+                self._set_boat_pose(HARBOR_X, HARBOR_Y, HARBOR_YAW)
+                return
+
+            # Reposition the boat only — used when the web UI switches modes
+            # (each mode starts fresh at its own pose) without touching any
+            # obstacles already placed in the world.
+            if obs_type == 'set_pose':
+                x = data.get('x', HARBOR_X)
+                y = data.get('y', HARBOR_Y)
+                yaw = data.get('yaw', HARBOR_YAW)
+                self.get_logger().info(f"↩️  Repositioning boat to x={x:.2f}, y={y:.2f}, yaw={yaw:.2f}")
+                self._set_boat_pose(x, y, yaw)
                 return
 
             x = data.get('x', 0.0)
