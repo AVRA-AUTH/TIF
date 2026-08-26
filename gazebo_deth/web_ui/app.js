@@ -244,31 +244,82 @@ function update3DPathLine() {
     }
 }
 
-// Solid-boundary contact check — island, pier walls, moored vessels, buoys/
-// dynamic obstacles. Used to kill FORWARD thrust only (like running the bow
-// into a mudbank: forward progress just dies), never to "wreck" the boat —
-// reverse always still works, so the boat backs itself off rather than
-// landing in a dead state that needs a Reset to clear. Called fresh from
-// every control path (Mode 2's two drive schemes, Mode 1/3's auto-nav) right
-// before publishing, rather than cached, since draw() and thrusterLoop() are
-// independent rAF loops with no guaranteed ordering.
-function isTouchingObstacle() {
+// Smooth speed limit approaching the island — unlike the hard block below,
+// this shrinks the achievable speed continuously as the hull nears
+// ISLAND_KEEP_OUT, converging to 0 exactly at the boundary via real
+// stopping-distance kinematics (v = sqrt(2 * decel * clearance)). Direction
+// agnostic on purpose — it's a distance-only cap, applied to whichever of
+// forward/reverse the caller is about to command, so a boat can sail into
+// the island stern-first just as easily as bow-first (backing toward it
+// while facing away) unless BOTH directions are throttled the same way.
+// Three things were tried and rejected before this: a hard cut right at the
+// boundary let real momentum coast the hull past it before drag caught up
+// ("lets the boat go into the island"), forcing full opposite thrust on
+// contact fixed that but fought a held key every single frame, reading as
+// the boat vibrating in place ("kind of stuck"), and capping forward only
+// left reverse with the original momentum problem ("sail in backwards").
+// This is the middle ground — out at open sea (clearance large) this
+// returns a huge number and has zero effect, so cruising is completely
+// unaffected; only inside the last few meters of the island's keep-out ring
+// does it start throttling the demand down, smoothly, like water getting
+// thick with mud rather than a switch flipping.
+const ISLAND_BRAKE_DECEL = 0.5; // m/s^2 — gentle; ~6.2m braking zone at MAX_LINEAR_FWD (2.49 m/s)
+function maxSpeedNearIsland() {
     const distToIsland = Math.hypot(ISLAND_X - boatPos.x, ISLAND_Y - boatPos.y);
-    if (distToIsland < ISLAND_RADIUS + 0.5) return true;
+    const clearance = distToIsland - ISLAND_KEEP_OUT;
+    if (clearance <= 0) return 0;
+    return Math.sqrt(2 * ISLAND_BRAKE_DECEL * clearance);
+}
 
-    const hullXExtent = Math.abs(Math.cos(boatPos.yaw)) * 2.8 + Math.abs(Math.sin(boatPos.yaw)) * 0.8;
-    const hullYExtent = Math.abs(Math.sin(boatPos.yaw)) * 2.8 + Math.abs(Math.cos(boatPos.yaw)) * 0.8;
+// Shoreline boundary check — direction-aware, unlike isTouchingObstacle()
+// below. A plain "blocked outside LAKE_RADIUS" flag (like the island's)
+// would also have to block reverse to stop the boat backing out stern-first,
+// but that risks wedging it dead at the edge with BOTH directions blocked
+// (e.g. right after a forward touch auto-backs it off in reverse). Instead
+// this predicts whether one step in the given direction (+1 forward, -1
+// reverse) would push the hull past the shore, so whichever direction is
+// actually headed back toward open water always stays free.
+function isExitingLake(direction) {
+    const dist = Math.hypot(boatPos.x, boatPos.y);
+    if (dist < LAKE_RADIUS - 2.0) return false; // well clear of shore, skip the trig
+    const stepX = boatPos.x + direction * Math.cos(boatPos.yaw) * 0.5;
+    const stepY = boatPos.y + direction * Math.sin(boatPos.yaw) * 0.5;
+    return Math.hypot(stepX, stepY) > LAKE_RADIUS - 0.5;
+}
+
+// Solid-boundary contact check — island, pier walls, moored vessels, buoys/
+// dynamic obstacles — evaluated at an arbitrary (x, y, yaw), not just the
+// boat's current pose, so isMovingIntoObstacle() below can also evaluate it
+// at a predicted next position. Called fresh from every control path
+// (Mode 2's two drive schemes, Mode 1/3's auto-nav) right before publishing,
+// rather than cached, since draw() and thrusterLoop() are independent rAF
+// loops with no guaranteed ordering.
+function isTouchingObstacleAt(x, y, yaw) {
+    // ISLAND_KEEP_OUT (33m), not ISLAND_RADIUS+0.5 (25.5m): the rendered
+    // island mesh — grass cylinder plus its sand-beach ring
+    // (islandSandGeo = CylinderGeometry(26.5, 30, ...)) — visually extends
+    // out to 30m, well past the old 25.5m boundary. That gap let the boat
+    // visibly drive across the sand before any collision ever triggered.
+    // ISLAND_KEEP_OUT already exists as the pathfinder's "guaranteed
+    // clearance" radius and comfortably clears the visible island (33 > 30),
+    // so the hard hull-collision boundary now matches what Mode 1/3 routes
+    // already stay clear of, instead of being tighter than the visuals.
+    const distToIsland = Math.hypot(ISLAND_X - x, ISLAND_Y - y);
+    if (distToIsland < ISLAND_KEEP_OUT) return true;
+
+    const hullXExtent = Math.abs(Math.cos(yaw)) * 2.8 + Math.abs(Math.sin(yaw)) * 0.8;
+    const hullYExtent = Math.abs(Math.sin(yaw)) * 2.8 + Math.abs(Math.cos(yaw)) * 0.8;
 
     // Main Spine Pier (y <= -173.0, x from -265.0 to -125.0) — positions scaled by WORLD_SCALE
-    if (boatPos.y - hullYExtent <= -173.0 * WORLD_SCALE && boatPos.x + hullXExtent >= -265.0 * WORLD_SCALE && boatPos.x - hullXExtent <= -125.0 * WORLD_SCALE) {
+    if (y - hullYExtent <= -173.0 * WORLD_SCALE && x + hullXExtent >= -265.0 * WORLD_SCALE && x - hullXExtent <= -125.0 * WORLD_SCALE) {
         return true;
     }
 
     // Finger Jetties (x = -245, -195, -145, width = 4m [jx - 2.0, jx + 2.0], y in [-175, -115])
     const jettiesXList = [-245.0 * WORLD_SCALE, -195.0 * WORLD_SCALE, -145.0 * WORLD_SCALE];
     for (const jx of jettiesXList) {
-        const overlapsX = (boatPos.x + hullXExtent >= jx - 2.0) && (boatPos.x - hullXExtent <= jx - 2.0 + 4.0);
-        const overlapsY = (boatPos.y + hullYExtent >= -175.0 * WORLD_SCALE) && (boatPos.y - hullYExtent <= -115.0 * WORLD_SCALE);
+        const overlapsX = (x + hullXExtent >= jx - 2.0) && (x - hullXExtent <= jx - 2.0 + 4.0);
+        const overlapsY = (y + hullYExtent >= -175.0 * WORLD_SCALE) && (y - hullYExtent <= -115.0 * WORLD_SCALE);
         if (overlapsX && overlapsY) return true;
     }
 
@@ -281,7 +332,7 @@ function isTouchingObstacle() {
                 { x: -150.5 * WORLD_SCALE, y: b }, { x: -139.5 * WORLD_SCALE, y: b }
             ];
             for (const pl of parkedLocs) {
-                if (Math.hypot(pl.x - boatPos.x, pl.y - boatPos.y) < 2.0) return true;
+                if (Math.hypot(pl.x - x, pl.y - y) < 2.0) return true;
             }
         }
     }
@@ -289,11 +340,44 @@ function isTouchingObstacle() {
     // Buoys & dynamic obstacles placed in Mode 1
     for (const ent of entities) {
         if (ent.type === 'static' || ent.type === 'dynamic') {
-            if (Math.hypot(ent.ros_x - boatPos.x, ent.ros_y - boatPos.y) < 1.7) return true;
+            if (Math.hypot(ent.ros_x - x, ent.ros_y - y) < 1.7) return true;
         }
     }
 
     return false;
+}
+
+function isTouchingObstacle() {
+    return isTouchingObstacleAt(boatPos.x, boatPos.y, boatPos.yaw);
+}
+
+// Direction-aware obstacle check — same step-prediction idea as
+// isExitingLake() above, applied to the island/pier/jetty/moored-boat/buoy
+// geometry instead of the shoreline. Only blocks the direction that would
+// actually drive the hull deeper into what it's touching, so a forward
+// collision can still always be escaped by reversing AND (new) a reverse
+// collision can always be escaped by going forward — neither direction is
+// trusted as a blanket "always free" escape hatch anymore, each is only
+// left free when it demonstrably moves the hull out of contact.
+//
+// Safety case a plain "block whichever direction is still touching after
+// its step" rule would miss: sliding along a flat wall (e.g. pinned
+// sideways against the spine pier) can leave BOTH a forward and a reverse
+// step still reading as "touching," since the touch check is an
+// axis-aligned box and a small step parallel to the wall doesn't cross out
+// of it either way. Blocking both in that case would strand the boat
+// needing a manual Reset — worse than the bug this is fixing — so when
+// both directions look blocked, treat it as ambiguous and block neither.
+function isMovingIntoObstacle(direction) {
+    if (!isTouchingObstacle()) return false;
+    const stepX = boatPos.x + direction * Math.cos(boatPos.yaw) * 0.5;
+    const stepY = boatPos.y + direction * Math.sin(boatPos.yaw) * 0.5;
+    const oppStepX = boatPos.x - direction * Math.cos(boatPos.yaw) * 0.5;
+    const oppStepY = boatPos.y - direction * Math.sin(boatPos.yaw) * 0.5;
+    const thisBlocked = isTouchingObstacleAt(stepX, stepY, boatPos.yaw);
+    const oppBlocked = isTouchingObstacleAt(oppStepX, oppStepY, boatPos.yaw);
+    if (thisBlocked && oppBlocked) return false;
+    return thisBlocked;
 }
 
 // Listen to boat Odometry — the sole source of boatPos, unconditionally, in
@@ -1481,14 +1565,17 @@ function draw() {
                 currentLinear = Math.max(MAX_LINEAR_REV, Math.min(MAX_LINEAR_FWD, currentLinear));
 
                 // Hull is already touching a solid boundary (island/pier wall/moored
-                // vessel/buoy) — kill any further FORWARD push into it, like running
-                // aground into thick mud. Unlike Mode 2 (where a human is holding the
-                // stick and can just press reverse), there's no one to un-stick an
-                // autonomous run — so back off a little instead of freezing at zero,
-                // so a graze against real hull geometry doesn't strand the mission
-                // needing a manual Reset.
-                if (currentLinear > 0 && isTouchingObstacle()) {
+                // vessel/buoy/shoreline) — kill any further push in whichever
+                // direction is actually driving deeper into it, like running
+                // aground into thick mud. Unlike Mode 2 (where a human is holding
+                // the stick and can just reverse), there's no one to un-stick an
+                // autonomous run — so a forward block backs off a little instead
+                // of freezing at zero, so a graze against real hull geometry
+                // doesn't strand the mission needing a manual Reset.
+                if (currentLinear > 0 && (isMovingIntoObstacle(1) || isExitingLake(1))) {
                     currentLinear = Math.max(MAX_LINEAR_REV, -0.6);
+                } else if (currentLinear < 0 && (isMovingIntoObstacle(-1) || isExitingLake(-1))) {
+                    currentLinear = 0;
                 }
 
                 // --- Angular: proportional heading control, capped at MAX_ANGULAR ---
@@ -2445,20 +2532,39 @@ function thrusterLoop() {
         // never both publish to the same thrust topics in the same frame.
         // Instant on/off, no ramp — real Gazebo physics does all the
         // shaping, same principle as the combined drive's instant-cutoff
-        // fix below.
-        let leftThrust = heldThrusterKeys.has('leftFwd') ? THRUSTER_MAX_FWD_N
-            : heldThrusterKeys.has('leftRev') ? THRUSTER_MIN_REV_N : 0.0;
-        let rightThrust = heldThrusterKeys.has('rightFwd') ? THRUSTER_MAX_FWD_N
-            : heldThrusterKeys.has('rightRev') ? THRUSTER_MIN_REV_N : 0.0;
+        // fix below. Both directions are scaled by the same island braking
+        // curve the combined drive uses — 1.0 (no effect) out at open sea,
+        // shrinking smoothly toward 0 only inside the island's braking
+        // zone, whichever direction (forward OR reverse) is being commanded.
+        const islandSpeedCap = maxSpeedNearIsland();
+        const fwdThrustScale = Math.max(0, Math.min(1, islandSpeedCap / MAX_LINEAR_FWD));
+        const revThrustScale = Math.max(0, Math.min(1, islandSpeedCap / Math.abs(MAX_LINEAR_REV)));
+        let leftThrust = heldThrusterKeys.has('leftFwd') ? THRUSTER_MAX_FWD_N * fwdThrustScale
+            : heldThrusterKeys.has('leftRev') ? THRUSTER_MIN_REV_N * revThrustScale : 0.0;
+        let rightThrust = heldThrusterKeys.has('rightFwd') ? THRUSTER_MAX_FWD_N * fwdThrustScale
+            : heldThrusterKeys.has('rightRev') ? THRUSTER_MIN_REV_N * revThrustScale : 0.0;
 
-        // Hull already touching a solid boundary — kill FORWARD thrust on
-        // whichever thruster(s) are pushing into it (like running aground
-        // into thick mud), leaving reverse free so it can always back off.
-        const blocked = (leftThrust > 0 || rightThrust > 0) && isTouchingObstacle();
-        if (blocked) {
+        // Hull already touching a solid boundary — kill thrust on whichever
+        // thruster(s) are pushing deeper into it (like running aground into
+        // thick mud), in whichever direction (forward OR reverse) that
+        // actually is; the other direction always stays free to back off.
+        // (Not a forced opposite-thrust push: fighting a still-held key that
+        // way re-triggers every frame as the ramp pulls back toward it,
+        // which reads as the boat vibrating in place at the boundary rather
+        // than cleanly stopping. The widened ISLAND_KEEP_OUT boundary below
+        // is what actually stops the boat short of the visible island —
+        // this only needs to hold the line, not shove back.)
+        const blockedFwd = (leftThrust > 0 || rightThrust > 0) && (isMovingIntoObstacle(1) || isExitingLake(1));
+        if (blockedFwd) {
             leftThrust = Math.min(leftThrust, 0);
             rightThrust = Math.min(rightThrust, 0);
         }
+        const blockedRev = (leftThrust < 0 || rightThrust < 0) && (isMovingIntoObstacle(-1) || isExitingLake(-1));
+        if (blockedRev) {
+            leftThrust = Math.max(leftThrust, 0);
+            rightThrust = Math.max(rightThrust, 0);
+        }
+        const blocked = blockedFwd || blockedRev;
 
         publishThrust(leftThrustTopic, leftThrust);
         publishThrust(rightThrustTopic, rightThrust);
@@ -2493,8 +2599,14 @@ function thrusterLoop() {
         // FWD/REV demand ceilings are now real hardware-derived equilibrium
         // speeds (see MAX_LINEAR_FWD/MAX_LINEAR_REV above), not arbitrary
         // software targets — no reason left to uncap these for experiments,
-        // real physics and the JS ceiling should now roughly agree.
-        const targetLinear = heldAxes.has('fwd') ? MAX_LINEAR_FWD : heldAxes.has('rev') ? MAX_LINEAR_REV : 0.0;
+        // real physics and the JS ceiling should now roughly agree. Both
+        // directions are additionally capped by maxSpeedNearIsland() — a
+        // no-op out at open sea, it only bites within the island's braking
+        // zone, whichever direction (forward OR reverse) is being commanded
+        // (a boat backing toward the island stern-first needs this just as
+        // much as one approaching bow-first).
+        const targetLinear = heldAxes.has('fwd') ? Math.min(MAX_LINEAR_FWD, maxSpeedNearIsland())
+            : heldAxes.has('rev') ? Math.max(MAX_LINEAR_REV, -maxSpeedNearIsland()) : 0.0;
         // EXPERIMENT (still active): turn demand uncapped (was MAX_ANGULAR =
         // 1.2) — same "let real physics decide" test already run on forward
         // speed. Once demand exceeds the thruster caps, one side saturates
@@ -2520,10 +2632,18 @@ function thrusterLoop() {
         currentLinear = targetLinear !== 0.0 ? approachVelocity(currentLinear, targetLinear, dt) : 0.0;
         currentAngular = targetAngular !== 0.0 ? approachVelocity(currentAngular, targetAngular, dt) : 0.0;
 
-        // Hull already touching a solid boundary — kill FORWARD push into it
-        // (like running aground into thick mud); reverse is left alone so it
-        // can always back off instead of getting stuck.
-        const blocked = currentLinear > 0 && isTouchingObstacle();
+        // Hull already touching a solid boundary — kill push in whichever
+        // direction (forward or reverse) is actually driving deeper into it
+        // (like running aground into thick mud); the other direction always
+        // stays free so the boat can back off instead of getting stuck.
+        // (Not a forced opposite-thrust push: fighting a still-held key that
+        // way re-triggers every frame as the ramp pulls back toward it,
+        // which read as the boat vibrating in place at the boundary rather
+        // than stopping cleanly. The widened ISLAND_KEEP_OUT boundary is
+        // what actually keeps the boat clear of the visible island — this
+        // only needs to hold the line, not shove back.)
+        const blocked = (currentLinear > 0 && (isMovingIntoObstacle(1) || isExitingLake(1)))
+            || (currentLinear < 0 && (isMovingIntoObstacle(-1) || isExitingLake(-1)));
         if (blocked) currentLinear = 0;
 
         // boatPos itself is NOT integrated here — it comes solely from the
