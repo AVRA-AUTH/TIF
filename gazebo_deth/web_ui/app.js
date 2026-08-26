@@ -683,6 +683,7 @@ const DETECTION_TYPE_INFO = {
     static: { label: 'Buoy', hex: 0xff8c00 },
     dynamic: { label: 'Boat', hex: 0x0f4c5c },
 };
+const MAX_DETECTION_DISTANCE = 60; // meters; farther objects don't get a box
 
 const detectionBox3 = new THREE.Box3();
 const detectionCenter = new THREE.Vector3();
@@ -709,12 +710,14 @@ function drawDetectionOverlay() {
         const info = DETECTION_TYPE_INFO[ent.type];
         if (!mesh || !info) return;
 
-        detectionBox3.setFromObject(mesh);
+        detectionBox3.makeEmpty();
+        (mesh.userData.detectionMeshes || [mesh]).forEach(m => detectionBox3.expandByObject(m));
         if (detectionBox3.isEmpty()) return;
 
         detectionBox3.getCenter(detectionCenter);
         detectionToObject.copy(detectionCenter).sub(camera.position);
         if (detectionToObject.dot(detectionForward) <= 0) return; // behind the camera
+        if (detectionToObject.length() > MAX_DETECTION_DISTANCE) return; // too far to plausibly detect
 
         const { min, max } = detectionBox3;
         const corners = [
@@ -779,6 +782,9 @@ function sync3DEntities() {
                 light.position.set(0, 1.4, 0);
                 buoyGroup.add(light);
 
+                // Detection box should hug the actual buoy body, not the
+                // much larger decorative keep-out ring.
+                buoyGroup.userData.detectionMeshes = [buoyMesh];
                 mesh = buoyGroup;
             } else if (ent.type === 'dynamic') {
                 // Ultra-Realistic Dynamic Patrol Vessel Model
@@ -886,6 +892,9 @@ function sync3DEntities() {
                 wakeMesh.position.set(-3.6, -0.38, 0);
                 obsBoatGroup.add(wakeMesh);
 
+                // Detection box should hug the hull/cabin/bow silhouette,
+                // not the thin mast/antenna/rails or the trailing wake plane.
+                obsBoatGroup.userData.detectionMeshes = [hullMesh, stripeMesh, bowMesh, cabinBase, glassMesh, eng1, eng2];
                 mesh = obsBoatGroup;
             } else if (ent.type === 'goal') {
                 const goalGeo = new THREE.TorusGeometry(1.5, 0.2, 16, 100);
