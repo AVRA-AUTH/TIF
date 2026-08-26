@@ -181,8 +181,12 @@ function updateDofPanel(surge, yawRate) {
     drawSparkline(dofCanvas.yawRate, dofHist.yawRate);
 }
 
-// State (Starting at Harbor Fairway Channel Entrance)
-let boatPos = { x: DOCK_ENTRANCE_X, y: DOCK_ENTRANCE_Y, yaw: -1.57, speed: 0 };
+// State (activeAppMode defaults to 1 below, so start where Mode 1 does —
+// otherwise a fresh page load put the boat at the marina entrance instead,
+// only matching Mode 1's actual spawn point once you switched modes and back)
+let boatPos = { x: MODE1_START.x, y: MODE1_START.y, yaw: MODE1_START.yaw, speed: 0 };
+// Odom updates arriving before this timestamp are dropped — see resetBoatToPose().
+let ignoreOdomUntil = 0;
 let currentMode = 'static';
 let activeAppMode = 1;
 
@@ -302,6 +306,16 @@ function isTouchingObstacle() {
 // in every mode, so it needs boatPos to be live at all times, not just
 // during Mode 2 or an active nav/dock run.
 odomTopic.subscribe((msg) => {
+    // Drop odom updates for a short window right after resetBoatToPose() —
+    // it snaps boatPos locally AND fires an async 'set_pose' to the Gazebo
+    // backend, but that physics teleport takes real time to land. Without
+    // this guard, an /odom message reporting the boat's OLD (pre-reset)
+    // pose could arrive first and clobber the reset right back, before the
+    // teleport actually completes — a race that only sometimes loses,
+    // which is why it looked like "the right spot, then the wrong one" on
+    // different clicks instead of failing consistently.
+    if (Date.now() < ignoreOdomUntil) return;
+
     // twist is in the child_frame (base_link, body frame) per this odometry
     // plugin's config (robot_base_frame: base_link) — linear.x is signed
     // surge speed (forward positive, reverse negative) directly, not a
@@ -2077,11 +2091,13 @@ document.getElementById('btn-run').addEventListener('click', () => {
 
 // Stops any nav/dock in progress and snaps the boat to `pose`, both locally
 // (so the map/3D view update instantly) and on the REAL Gazebo boat via the
-// backend's 'set_pose' handler — boatPos otherwise gets overwritten straight
-// back to wherever the simulated boat physically is by the next /odom tick
-// (odom drives boatPos whenever Mode 2 is active or a nav/dock run is under
-// way). Used both by Reset and by every mode-switch, so entering a mode
-// never carries over position or navigation state from what came before.
+// backend's 'set_pose' handler. odom now drives boatPos unconditionally in
+// every mode (see odomTopic.subscribe), so without ignoreOdomUntil below,
+// boatPos would get overwritten straight back to wherever the boat
+// physically still is by the next /odom tick — the backend's teleport is
+// async and takes real time to land. Used both by Reset and by every
+// mode-switch, so entering a mode never carries over position or
+// navigation state from what came before.
 function resetBoatToPose(pose) {
     isNavigating = false;
     isAutoDocking = false;
@@ -2092,6 +2108,10 @@ function resetBoatToPose(pose) {
     currentAngular = 0.0;
 
     boatPos = { x: pose.x, y: pose.y, yaw: pose.yaw, speed: 0 };
+    // Give the backend's async 'set_pose' teleport time to actually land in
+    // Gazebo before trusting /odom again — otherwise a stale reading from
+    // the boat's pre-reset position can win the race and clobber this.
+    ignoreOdomUntil = Date.now() + 1000;
     if (boatGroup) {
         boatGroup.position.set(pose.x, 0.4, -pose.y);
         boatGroup.rotation.set(0, pose.yaw, 0);
@@ -2109,9 +2129,26 @@ function resetBoatToPose(pose) {
     }));
 }
 
+// Clears everything placed in Mode 1 (buoys, moving boats, the goal marker)
+// while keeping the ~30 permanent moored boats (isParkedShip) intact — those
+// are baked-in marina scenery set up once at page load, not part of a
+// design, and never get re-added if wiped. Used by Reset AND by every mode
+// switch below, so a design from Mode 1 never silently carries over into
+// Mode 2/3 (or into a fresh Mode 1 session) — same "always start clean"
+// principle resetBoatToPose already applies to the boat's position.
+function clearMode1Design() {
+    threeEntities.forEach(mesh => scene.remove(mesh));
+    threeEntities.clear();
+    entities = entities.filter(ent => ent.isParkedShip);
+    currentGoal = null;
+}
+
 document.getElementById('btn-reset').addEventListener('click', () => {
-    // 1. Halt nav/docking, snap boat back to the Harbor Fairway Entrance
-    resetBoatToPose({ x: DOCK_ENTRANCE_X, y: DOCK_ENTRANCE_Y, yaw: -1.57 });
+    // 1. Halt nav/docking, snap boat back to Mode 1's own start pose (this
+    // button only exists in mode1-tools — it used to hardcode the marina
+    // entrance instead, which only matches Mode 1's actual spawn point by
+    // coincidence when MODE1_START happens to equal it).
+    resetBoatToPose(MODE1_START);
 
     // 2. Send Reset signal to Gazebo Backend Spawner to delete physical obstacle models
     const resetMsg = new ROSLIB.Message({
@@ -2120,9 +2157,7 @@ document.getElementById('btn-reset').addEventListener('click', () => {
     spawnTopic.publish(resetMsg);
 
     // 3. Remove all 3D meshes from Three.js scene & clear 2D entity lists
-    threeEntities.forEach(mesh => scene.remove(mesh));
-    threeEntities.clear();
-    entities = [];
+    clearMode1Design();
 
     // 4. Reset UI Telemetry Display
     document.getElementById('tele-status').textContent = 'Design Phase';
@@ -2145,6 +2180,7 @@ if (mode1Btn) {
         if (activeAppMode === 2) stopThrusters();
         activeAppMode = 1;
         resetBoatToPose(MODE1_START);
+        clearMode1Design();
         mode1Btn.classList.add('active');
         if (mode2Btn) mode2Btn.classList.remove('active');
         if (mode3Btn) mode3Btn.classList.remove('active');
@@ -2160,6 +2196,7 @@ if (mode2Btn) {
         if (activeAppMode === 2) stopThrusters();
         activeAppMode = 2;
         resetBoatToPose(MODE2_START);
+        clearMode1Design();
         mode2Btn.classList.add('active');
         if (mode1Btn) mode1Btn.classList.remove('active');
         if (mode3Btn) mode3Btn.classList.remove('active');
@@ -2175,6 +2212,7 @@ if (mode3Btn) {
         if (activeAppMode === 2) stopThrusters();
         activeAppMode = 3;
         resetBoatToPose(MODE3_START);
+        clearMode1Design();
         mode3Btn.classList.add('active');
         if (mode1Btn) mode1Btn.classList.remove('active');
         if (mode2Btn) mode2Btn.classList.remove('active');
