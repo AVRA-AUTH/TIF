@@ -18,30 +18,13 @@ document.querySelectorAll('.tool-btn').forEach(btn => {
     });
 });
 
-canvas.addEventListener('click', (e) => {
-    const rect = canvas.getBoundingClientRect();
-    const cx = e.clientX - rect.left;
-    const cy = e.clientY - rect.top;
-    let { rx, ry } = canvasToRos(cx, cy);
-
-    // In Mode 3, click near any pier edge to calculate dynamic autonomous parking
-    if (activeAppMode === 3) {
-        const dockTypeSel = document.getElementById('dock-type-selector');
-        const isParallel = dockTypeSel ? (dockTypeSel.value === 'parallel') : true;
-
-        // Berth detection/validation moved to docking.js's detectBerthAtClick()
-        // (same logic, same alert() messages on an invalid/occupied/blocked
-        // spot — it returns null in those cases instead of returning here).
-        const bestBerth = detectBerthAtClick(rx, ry, isParallel);
-        if (!bestBerth) return;
-
-        // Start Dynamic Docking Sequence!
-        startDynamicDocking(bestBerth);
-        return;
-    }
-
-    if (activeAppMode !== 1 || !currentMode) return;
-
+// Shared by both placement surfaces (2D tactical map below, and the 3D FPV
+// view further down) — clamps a raw ROS-frame click point to Mode 1's
+// open-water/island constraints, then either sets the goal or spawns a new
+// buoy/dynamic-boat entity (both locally and on the real Gazebo backend via
+// spawnTopic), exactly as the 2D map click handler always did. Callers are
+// responsible for their own activeAppMode/currentMode gating first.
+function placeMode1EntityAt(rx, ry) {
     // Enforce Lake Open-Water Constraints (Keep goals & buoys inside water body).
     // 330 keeps the same ~5% margin inside LAKE_RADIUS's own 350 pre-scale
     // reference that the old 285/300 pair had.
@@ -80,6 +63,58 @@ canvas.addEventListener('click', (e) => {
         });
         spawnTopic.publish(msg);
     }
+}
+
+canvas.addEventListener('click', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+    let { rx, ry } = canvasToRos(cx, cy);
+
+    // In Mode 3, click near any pier edge to calculate dynamic autonomous parking
+    if (activeAppMode === 3) {
+        const dockTypeSel = document.getElementById('dock-type-selector');
+        const isParallel = dockTypeSel ? (dockTypeSel.value === 'parallel') : true;
+
+        // Berth detection/validation moved to docking.js's detectBerthAtClick()
+        // (same logic, same alert() messages on an invalid/occupied/blocked
+        // spot — it returns null in those cases instead of returning here).
+        const bestBerth = detectBerthAtClick(rx, ry, isParallel);
+        if (!bestBerth) return;
+
+        // Start Dynamic Docking Sequence!
+        startDynamicDocking(bestBerth);
+        return;
+    }
+
+    if (activeAppMode !== 1 || !currentMode) return;
+    placeMode1EntityAt(rx, ry);
+});
+
+// Place obstacles/goal directly in the 3D FPV camera view, same tool
+// selection (🟡/🚢/🏁) as the 2D tactical map — click a spot in the 3D view
+// and it raycasts against the water plane (y=0) using the SAME `camera` that
+// follows the boat (scene-environment.js), turning the click into a ROS-frame
+// (x, y) point the exact same way canvasToRos() does for the 2D map (Three.js
+// z = -ROS y, matching every mesh placement in this codebase, e.g. boatGroup/
+// entities-3d.js). Reuses placeMode1EntityAt() so both views share the exact
+// same clamping/spawn/publish logic — clicking either view has identical
+// effect on the actual simulation.
+const raycaster = new THREE.Raycaster();
+const raycastMouse = new THREE.Vector2();
+const waterPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+renderer.domElement.addEventListener('click', (e) => {
+    if (activeAppMode !== 1 || !currentMode) return;
+
+    const rect = renderer.domElement.getBoundingClientRect();
+    raycastMouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    raycastMouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+    raycaster.setFromCamera(raycastMouse, camera);
+    const hit = new THREE.Vector3();
+    if (!raycaster.ray.intersectPlane(waterPlane, hit)) return; // camera looking away from the water plane
+
+    placeMode1EntityAt(hit.x, -hit.z);
 });
 
 // ▶️ RUN ASV DEMO Button
