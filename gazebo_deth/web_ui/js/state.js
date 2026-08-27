@@ -34,6 +34,9 @@ let threePathLine = null;
 // needs: {alignX, alignY, chosen}. Set there, cleared whenever a docking run
 // ends (goal reached, Reset, mode switch).
 let dockingTarget = null;
+// Mode 1 ship/buoy collision popup (navigation.js) — latched so the alert()
+// fires once per contact instead of every frame the hull stays touching.
+let shipCollisionAlertShown = false;
 
 let isAutoDocking = false;
 let dockingBerthName = '';

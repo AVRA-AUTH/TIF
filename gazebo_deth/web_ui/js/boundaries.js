@@ -269,6 +269,35 @@ function isTouchingObstacle() {
     return isTouchingObstacleAt(boatPos.x, boatPos.y, boatPos.yaw);
 }
 
+// Narrower companion to isTouchingObstacleAt() above — only the "another
+// vessel" categories (moored ships along the jetties, and dynamic/static
+// entities placed in Mode 1), NOT the island/pier/jetty/shoreline geometry.
+// Returns 'ship', 'buoy', or null, so a Mode 1 collision popup (input.js)
+// can tell "hit a boat" from "hit a buoy" apart from a plain grounding.
+// Same hull-contact radii as isTouchingObstacleAt (2.0m moored vessels,
+// 1.7m buoys/dynamic entities) so this agrees with the physical backstop.
+function isTouchingShipOrBuoyAt(x, y) {
+    for (let b = -168 * WORLD_SCALE; b <= -128 * WORLD_SCALE; b += 6.5 * WORLD_SCALE) {
+        if (Math.abs(b - (-147.5 * WORLD_SCALE)) > 3.0) {
+            const parkedLocs = [
+                { x: -250.5 * WORLD_SCALE, y: b }, { x: -239.5 * WORLD_SCALE, y: b },
+                { x: -200.5 * WORLD_SCALE, y: b }, { x: -189.5 * WORLD_SCALE, y: b },
+                { x: -150.5 * WORLD_SCALE, y: b }, { x: -139.5 * WORLD_SCALE, y: b }
+            ];
+            for (const pl of parkedLocs) {
+                if (Math.hypot(pl.x - x, pl.y - y) < 2.0) return 'ship';
+            }
+        }
+    }
+
+    for (const ent of entities) {
+        if (ent.type === 'dynamic' && Math.hypot(ent.ros_x - x, ent.ros_y - y) < 1.7) return 'ship';
+        if (ent.type === 'static' && Math.hypot(ent.ros_x - x, ent.ros_y - y) < 1.7) return 'buoy';
+    }
+
+    return null;
+}
+
 // Direction-aware obstacle check — same step-prediction idea as
 // isExitingLake() above, applied to the island/pier/jetty/moored-boat/buoy
 // geometry instead of the shoreline. Only blocks the direction that would

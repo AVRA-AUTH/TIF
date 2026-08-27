@@ -55,6 +55,23 @@ function update3DPathLine() {
 // gate the original code had, just moved to the call site instead of being
 // the first line of this function, so main.js's own `if` stays visible.
 function runNavigationStep(navDt) {
+        // Mode 1 only: pop an alert the moment the hull actually touches
+        // another ship (moored or patrolling) or a buoy — separate from the
+        // generic island/pier/shore hull-contact backstop further down,
+        // which already handles the physical stop/back-off for ALL solid
+        // obstacles but never tells the user WHAT was hit. Latched on
+        // shipCollisionAlertShown so this fires once per contact rather than
+        // spamming alert() every frame the hull stays touching.
+        if (activeAppMode === 1) {
+            const hit = isTouchingShipOrBuoyAt(boatPos.x, boatPos.y);
+            if (hit && !shipCollisionAlertShown) {
+                shipCollisionAlertShown = true;
+                alert(hit === 'ship' ? '🚢 Ship Collided! You crashed into another vessel.' : '🛟 Ship Collided! You hit a buoy.');
+            } else if (!hit) {
+                shipCollisionAlertShown = false;
+            }
+        }
+
         const now = Date.now();
         // Receding Horizon Sensor Scan: Recalculate path live every 250ms based on local 25m sensor horizon.
         // Mode 3 docking used to be fully excluded from this — its own

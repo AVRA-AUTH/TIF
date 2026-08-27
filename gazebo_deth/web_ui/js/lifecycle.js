@@ -24,6 +24,7 @@ function resetBoatToPose(pose) {
     ilosState = { k: 1, y_int: 0 };
     currentLinear = 0.0;
     currentAngular = 0.0;
+    shipCollisionAlertShown = false;
 
     boatPos = { x: pose.x, y: pose.y, yaw: pose.yaw, speed: 0 };
     // Give the backend's async 'set_pose' teleport time to actually land in
