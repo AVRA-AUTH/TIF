@@ -46,6 +46,11 @@ function resetBoatToPose(pose) {
     spawnTopic.publish(new ROSLIB.Message({
         data: JSON.stringify({ type: 'set_pose', x: pose.x, y: pose.y, yaw: pose.yaw })
     }));
+
+    // Called on every mode switch and Reset — always leave the Mode-3-only
+    // turn-thrust-reserve (see docking.js/cmd_vel_thrust_mixer.py) off
+    // outside of an active docking run.
+    turnReserveTopic.publish(new ROSLIB.Message({ data: false }));
 }
 
 // Clears everything placed in Mode 1 (buoys, moving boats, the goal marker)

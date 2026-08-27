@@ -333,6 +333,9 @@ function runNavigationStep(navDt) {
                         document.getElementById('tele-status').textContent = '🟢 STATE 3: Creep Insertion...';
                         document.getElementById('tele-status').style.color = '#00ff00';
                     }
+                    // Hard ceiling, independent of MAX_LINEAR_FWD/REV — only
+                    // 'transit' (2.49 m/s) actually exceeds this today.
+                    cruiseSpeed = Math.max(-DOCK_MAX_SPEED, Math.min(DOCK_MAX_SPEED, cruiseSpeed));
                 }
 
                 // Heading lock: hold position and turn first when badly
@@ -392,33 +395,26 @@ function runNavigationStep(navDt) {
                 if (pivotOnly) {
                     currentLinear = approachVelocity(currentLinear, 0.0, navDt);
                 } else {
-                    const brakeDist = (currentLinear * currentLinear) / (2 * brakeDecel);
-                    if (dist > brakeDist) {
-                        // Plenty of room — cruise (accelerating toward it via THRUST_RAMP_RATE
-                        // if not already there)
-                        currentLinear = approachVelocity(currentLinear, cruiseSpeed, navDt);
-                    } else {
-                        // Inside the braking window: decelerate at brakeDecel directly,
-                        // rather than through approachVelocity's hardcoded
-                        // WATER_FRICTION_RATE — the rate used to decide WHEN to start
-                        // braking has to match the rate actually applied, or a gentler
-                        // brakeDecel here would never actually produce the longer glide
-                        // the brakeDist above was computed for.
-                        const step = brakeDecel * navDt;
-                        if (Math.abs(currentLinear) <= step) {
-                            currentLinear = 0;
-                        } else {
-                            currentLinear -= Math.sign(currentLinear) * step;
-                        }
-                        // Safety net: if there's somehow still less room than this needs
-                        // (e.g. the path got recalculated mid-leg), brake harder with
-                        // reverse thrust instead of overshooting.
-                        const requiredDecel = (currentLinear * currentLinear) / (2 * Math.max(dist, 0.05));
-                        if (requiredDecel > brakeDecel * 2.0 && Math.abs(currentLinear) > 0.05) {
-                            const reverseTarget = -Math.sign(currentLinear) * Math.min(Math.abs(MAX_LINEAR_REV), 1.0);
-                            currentLinear = approachVelocity(currentLinear, reverseTarget, navDt);
-                        }
-                    }
+                    // Speed cap consistent with stopping exactly at the target under
+                    // brakeDecel (v = sqrt(2*a*d)) — the SAME graduated-braking formula
+                    // boundaries.js already uses for the island/shore/marina keep-outs
+                    // ("real stopping-distance kinematics"), recomputed fresh from the
+                    // live `dist` every frame instead of open-loop-decremented from a
+                    // separately-computed brakeDist. The old two-branch version (cruise
+                    // until inside brakeDist, then subtract a fixed step, with a
+                    // "requiredDecel too high" fallback that slammed in up to -1.0 m/s
+                    // of reverse thrust) could overshoot the fallback's trigger,
+                    // reverse away from the target, re-enter the "plenty of room, cruise
+                    // toward cruiseSpeed" branch, and repeat — a real bang-bang limit
+                    // cycle, which is what read as the boat "going front and back" and
+                    // never settling right at the target. Recomputing the cap directly
+                    // from real remaining distance every frame is self-correcting by
+                    // construction and can't develop that cycle: far away it just
+                    // reduces to cruiseSpeed (sqrt term is large), and near the target it
+                    // smoothly converges to 0, never needing a separate reverse fallback.
+                    const maxSpeedForStop = Math.sqrt(Math.max(0, 2 * brakeDecel * dist));
+                    const speedTarget = Math.sign(cruiseSpeed) * Math.min(Math.abs(cruiseSpeed), maxSpeedForStop);
+                    currentLinear = approachVelocity(currentLinear, speedTarget, navDt);
                 }
                 currentLinear = Math.max(MAX_LINEAR_REV, Math.min(MAX_LINEAR_FWD, currentLinear));
 
@@ -475,6 +471,10 @@ function runNavigationStep(navDt) {
             if (isAutoDocking) {
                 isAutoDocking = false;
                 dockingTarget = null;
+                // Docking run finished on its own (not via Reset/mode-switch,
+                // which already turn this off in resetBoatToPose()) — turn
+                // the Mode-3-only turn-thrust-reserve back off now.
+                turnReserveTopic.publish(new ROSLIB.Message({ data: false }));
                 document.getElementById('tele-status').textContent = `🎉 DOCKED SAFELY: ${dockingBerthName}!`;
                 document.getElementById('tele-status').style.color = '#28a745';
             } else {

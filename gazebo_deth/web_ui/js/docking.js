@@ -129,6 +129,13 @@ function startDynamicDocking(chosen) {
     isNavigating = false;
     isAutoDocking = true;
     dockingBerthName = chosen.name;
+    // Full turn-thrust-reserve, Mode 3 only (see cmd_vel_thrust_mixer.py):
+    // guarantees the boat can always turn at its full MAX_ANGULAR rate,
+    // even at commanded cruise speed, at the cost of a lower real top speed
+    // for the whole docking run (transit + docking legs alike). Turned back
+    // off in lifecycle.js's resetBoatToPose() and navigation.js's
+    // docking-complete branch.
+    turnReserveTopic.publish(new ROSLIB.Message({ data: true }));
 
     if (dynamic3DBerthMesh) {
         dynamic3DBerthMesh.position.set(chosen.ros_x, 0.4, -chosen.ros_y);
