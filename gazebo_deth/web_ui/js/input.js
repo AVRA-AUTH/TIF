@@ -183,12 +183,18 @@ const mode1Tools = document.getElementById('mode1-tools');
 const mode2Tools = document.getElementById('mode2-tools');
 const mode3Tools = document.getElementById('mode3-tools');
 
+// Persisted across reloads (see the restore block below this) so refreshing
+// the page returns to whichever mode was active beforehand, at that mode's
+// own starting pose, instead of always reloading into Mode 1.
+const ACTIVE_MODE_STORAGE_KEY = 'avraActiveMode';
+
 if (mode1Btn) {
     mode1Btn.addEventListener('click', () => {
         if (activeAppMode === 2) stopThrusters();
         activeAppMode = 1;
         resetBoatToPose(MODE1_START);
         clearMode1Design();
+        localStorage.setItem(ACTIVE_MODE_STORAGE_KEY, '1');
         mode1Btn.classList.add('active');
         if (mode2Btn) mode2Btn.classList.remove('active');
         if (mode3Btn) mode3Btn.classList.remove('active');
@@ -205,6 +211,7 @@ if (mode2Btn) {
         activeAppMode = 2;
         resetBoatToPose(MODE2_START);
         clearMode1Design();
+        localStorage.setItem(ACTIVE_MODE_STORAGE_KEY, '2');
         mode2Btn.classList.add('active');
         if (mode1Btn) mode1Btn.classList.remove('active');
         if (mode3Btn) mode3Btn.classList.remove('active');
@@ -221,6 +228,7 @@ if (mode3Btn) {
         activeAppMode = 3;
         resetBoatToPose(MODE3_START);
         clearMode1Design();
+        localStorage.setItem(ACTIVE_MODE_STORAGE_KEY, '3');
         mode3Btn.classList.add('active');
         if (mode1Btn) mode1Btn.classList.remove('active');
         if (mode2Btn) mode2Btn.classList.remove('active');
@@ -230,6 +238,17 @@ if (mode3Btn) {
         if (dofPanel) dofPanel.style.display = 'block';
     });
 }
+
+// Restore whichever mode was active before a refresh. state.js already
+// boots activeAppMode/boatPos at Mode 1's own start pose, so only 2/3 need
+// to replay their button's full switch logic (pose reset, tool-panel
+// visibility, active-button highlight). Guarded in case a browser has
+// localStorage disabled (throws instead of returning null).
+try {
+    const savedMode = localStorage.getItem(ACTIVE_MODE_STORAGE_KEY);
+    if (savedMode === '2' && mode2Btn) mode2Btn.click();
+    else if (savedMode === '3' && mode3Btn) mode3Btn.click();
+} catch (e) { /* localStorage unavailable — just stay on Mode 1's default start */ }
 
 // Mode 2 Controls: continuous thruster + water-friction velocity model.
 // A held control ramps quickly toward its fixed end velocity (thrusters
@@ -295,9 +314,17 @@ bindThruster(document.getElementById('btn-down'), 'rev');
 bindThruster(document.getElementById('btn-left'), 'left');
 bindThruster(document.getElementById('btn-right'), 'right');
 
+// Mode 2's STOP button — not just a thruster kill, also snaps the boat back
+// to Mode 2's own starting pose, same "stop == back to this mode's start"
+// behavior as Mode 1's btn-reset and Mode 3's btn-reset-dock.
+function stopAndResetMode2() {
+    stopThrusters();
+    resetBoatToPose(MODE2_START);
+}
+
 const btnStop = document.getElementById('btn-stop');
 if (btnStop) {
-    btnStop.addEventListener('click', stopThrusters);
+    btnStop.addEventListener('click', stopAndResetMode2);
 }
 
 window.addEventListener('keydown', (e) => {
