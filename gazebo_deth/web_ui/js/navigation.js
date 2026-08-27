@@ -180,13 +180,59 @@ function runNavigationStep(navDt) {
                 dist = Math.hypot(dx, dy);
                 nextTarget = transitWaypoints[ilos.seg + 1];
 
+                // COLREGS (colregs.js, ported from the user's Python
+                // VO_collision_avoidance source): is there a nearby dynamic
+                // ship where this boat is give-way (or the encounter is
+                // head-on, where BOTH vessels must turn starboard)? If so,
+                // restrict localCorrectedYaw()'s fan below to starboard-turn
+                // candidates only — never let the "avoid a fresh obstacle"
+                // correction cut across the other vessel's bow to port. Only
+                // dynamic ships are COLREGS encounters; static buoys aren't
+                // vessels and don't have a heading/give-way side. Cheap
+                // per-tick loop over `entities` (already bounded by however
+                // many the user has placed), same sensor horizon (25m) as
+                // the live replan above.
+                let colregsGiveWay = false;
+                let colregsSituation = null;
+                for (const ent of entities) {
+                    if (ent.type !== 'dynamic' || ent.isCrashed || ent.heading === undefined) continue;
+                    if (Math.hypot(ent.ros_x - boatPos.x, ent.ros_y - boatPos.y) > 25.0) continue;
+                    const bearingDeg = relativeBearingDeg(boatPos.x, boatPos.y, boatPos.yaw, ent.ros_x, ent.ros_y);
+                    const situation = encounterSituation(boatPos.yaw, ent.heading, bearingDeg);
+                    if (situation === 'Head-on' || isGiveWayShip(situation, bearingDeg, Math.abs(currentLinear), ent.speed || 0)) {
+                        colregsGiveWay = true;
+                        colregsSituation = situation;
+                        break;
+                    }
+                }
+
+                // Testing/visibility aid: this is otherwise invisible (it only
+                // restricts WHICH candidate headings localCorrectedYaw() below
+                // tries, not a new obstacle check of its own) — surface it on
+                // the existing tele-status HUD so give-way engagement can
+                // actually be seen live, same element input.js's Run button
+                // and the docking states below already drive. Left untouched
+                // during docking (isAutoDocking owns tele-status there).
+                if (!isAutoDocking) {
+                    const teleStatusEl = document.getElementById('tele-status');
+                    if (teleStatusEl) {
+                        if (colregsGiveWay) {
+                            teleStatusEl.textContent = `🧭 COLREGS Give-Way (${colregsSituation}) — Starboard Only`;
+                            teleStatusEl.style.color = '#ff66cc';
+                        } else if (teleStatusEl.textContent.startsWith('🧭')) {
+                            teleStatusEl.textContent = '▶️ Navigating...';
+                            teleStatusEl.style.color = '#00ffcc';
+                        }
+                    }
+                }
+
                 // Lightweight tick-rate local correction (DWA-style fan of
                 // candidate headings, localCorrectedYaw() above) layered
                 // under ILOS's heading — catches a fresh obstacle or
                 // disturbance-induced drift immediately instead of waiting
                 // for the next 250ms global replan. No-op when ILOS's own
                 // heading is already clear.
-                targetYaw = localCorrectedYaw(boatPos.x, boatPos.y, currentLinear, ilos.psi_d, entities);
+                targetYaw = localCorrectedYaw(boatPos.x, boatPos.y, currentLinear, ilos.psi_d, entities, colregsGiveWay);
 
                 // Same tolerances the old per-point advance used for a
                 // standard/docking transit leg — only checked against the
