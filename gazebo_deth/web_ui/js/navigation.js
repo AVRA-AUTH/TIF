@@ -14,35 +14,16 @@
 function update3DPathLine() {
     if (threePathLine) {
         scene.remove(threePathLine);
-        if (threePathLine.geometry) threePathLine.geometry.dispose();
         threePathLine = null;
     }
-
-    if (plannedPath && plannedPath.length > 1) {
-        // Filter out duplicate points (like in 'align' states) that break computeLineDistances!
-        const uniquePoints = [];
-        plannedPath.forEach(p => {
-            if (uniquePoints.length === 0) {
-                uniquePoints.push(new THREE.Vector3(p.x, 0.4, -p.y));
-            } else {
-                const lastP = uniquePoints[uniquePoints.length - 1];
-                if (Math.abs(lastP.x - p.x) > 0.01 || Math.abs(lastP.z - (-p.y)) > 0.01) {
-                    uniquePoints.push(new THREE.Vector3(p.x, 0.4, -p.y));
-                }
-            }
-        });
-
-        if (uniquePoints.length > 1) {
-            const lineGeo = new THREE.BufferGeometry().setFromPoints(uniquePoints);
-            const lineMat = new THREE.LineDashedMaterial({
-                color: 0x00ffcc,
-                linewidth: 3,
-                scale: 1,
-                dashSize: 1,
-                gapSize: 0.5
-            });
-            threePathLine = new THREE.Line(lineGeo, lineMat);
-            threePathLine.computeLineDistances();
+    if (plannedPath && plannedPath.length > 1 && pathIndex < plannedPath.length) {
+        const from = new THREE.Vector3(boatPos.x, 0.6, -boatPos.y);
+        const target = plannedPath[pathIndex];
+        const to = new THREE.Vector3(target.x, 0.6, -target.y);
+        const dir = to.clone().sub(from);
+        const length = Math.min(dir.length(), 15);
+        if (length > 0.5) {
+            threePathLine = new THREE.ArrowHelper(dir.normalize(), from, length, 0x00ffcc, 2.5, 1.5);
             scene.add(threePathLine);
         }
     }
@@ -472,7 +453,9 @@ function updateDynamicEntities() {
                 ];
                 entity.patrolIdx = 0;
                 entity.heading = Math.random() * Math.PI * 2;
-                entity.speed = 1.0; // Heavy ship cruising speed
+                entity.speedMode = Math.random() < 0.5 ? 'constant' : 'variable';
+                entity.baseSpeed = 1.0;
+                entity.speed = entity.baseSpeed;
             }
 
             // Target current patrol waypoint in loop
@@ -493,6 +476,10 @@ function updateDynamicEntities() {
             while (headingDiff < -Math.PI) headingDiff += 2 * Math.PI;
 
             entity.heading += headingDiff * 0.015; // Slow, wide ship turning radius
+           
+            if (entity.speedMode === 'variable') {
+            entity.speed = entity.baseSpeed * (0.6 + 0.4 * Math.sin(Date.now() * 0.0005 + entity.ros_x));
+            }
 
             // Advance boat position forward along its hull orientation
             entity.ros_x += Math.cos(entity.heading) * entity.speed * 0.05;

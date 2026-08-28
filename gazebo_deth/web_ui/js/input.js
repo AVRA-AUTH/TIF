@@ -9,6 +9,37 @@
 // listeners below are attached, and attaching a listener doesn't require
 // the render loop to already be running).
 
+let hoveredBerth = null;
+let boatSpeedMultiplier = 1.0; // 0.5 slow, 1.0 medium, 1.6 fast
+
+canvas.addEventListener('mousemove', (e) => {
+    if (activeAppMode !== 3) { hoveredBerth = null; return; }
+    const rect = canvas.getBoundingClientRect();
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+    const { rx, ry } = canvasToRos(cx, cy);
+    const dockTypeSel = document.getElementById('dock-type-selector');
+    const isParallel = dockTypeSel ? (dockTypeSel.value === 'parallel') : true;
+    hoveredBerth = probeBerthCandidate(rx, ry, isParallel);
+});
+
+
+document.getElementById('speed-slow')?.addEventListener('click', () => {
+    boatSpeedMultiplier = 0.5;
+    document.querySelectorAll('#mode2-tools .dbtn').forEach(b => b.classList.remove('active'));
+    document.getElementById('speed-slow').classList.add('active');
+});
+document.getElementById('speed-medium')?.addEventListener('click', () => {
+    boatSpeedMultiplier = 1.0;
+    document.querySelectorAll('#mode2-tools .dbtn').forEach(b => b.classList.remove('active'));
+    document.getElementById('speed-medium').classList.add('active');
+});
+document.getElementById('speed-fast')?.addEventListener('click', () => {
+    boatSpeedMultiplier = 1.6;
+    document.querySelectorAll('#mode2-tools .dbtn').forEach(b => b.classList.remove('active'));
+    document.getElementById('speed-fast').classList.add('active');
+});
+
 // UI Interactions
 document.querySelectorAll('.tool-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
@@ -365,7 +396,7 @@ function thrusterLoop() {
             lastPublishedLeftThrust = 0.0;
             lastPublishedRightThrust = 0.0;
         }
-
+        
         // FWD/REV demand ceilings are now real hardware-derived equilibrium
         // speeds (see MAX_LINEAR_FWD/MAX_LINEAR_REV above), not arbitrary
         // software targets — no reason left to uncap these for experiments,
@@ -375,8 +406,8 @@ function thrusterLoop() {
         // out at open sea, it only bites within a boundary's braking zone. The
         // OTHER direction (the escape route) is left uncapped, so braking to a
         // stop near either boundary never also blocks getting away from it.
-        const targetLinear = heldAxes.has('fwd') ? boundaryCappedSpeed(1, MAX_LINEAR_FWD)
-            : heldAxes.has('rev') ? -boundaryCappedSpeed(-1, Math.abs(MAX_LINEAR_REV))
+        const targetLinear = heldAxes.has('fwd') ? boundaryCappedSpeed(1, MAX_LINEAR_FWD * boatSpeedMultiplier)
+            : heldAxes.has('rev') ? -boundaryCappedSpeed(-1, Math.abs(MAX_LINEAR_REV) * boatSpeedMultiplier)
                 : 0.0;
         // EXPERIMENT (still active): turn demand uncapped (was MAX_ANGULAR =
         // 1.2) — same "let real physics decide" test already run on forward

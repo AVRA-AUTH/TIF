@@ -24,6 +24,33 @@ function selectBerth(idx) {
     });
 }
 
+// Silent version for hover preview - same berth-search logic, no alert()s,
+// no occupied/obstacle side-effects, just "is there a valid spot here?"
+function probeBerthCandidate(rx, ry, isParallel) {
+    let bestBerth = null;
+    let minDist = 3.5;
+
+    if (rx >= MARINA_PIER_X_MIN && rx <= MARINA_PIER_X_MAX) {
+        if (Math.abs(ry - (-175.0 * WORLD_SCALE)) < minDist) {
+            minDist = Math.abs(ry - (-175.0 * WORLD_SCALE));
+            bestBerth = { ros_x: rx, ros_y: isParallel ? -171.2 * WORLD_SCALE : -168.8 * WORLD_SCALE };
+        }
+    }
+    JETTY_X_LIST.forEach((jx) => {
+        if (ry <= JETTY_Y_NEAR && ry >= JETTY_Y_FAR) {
+            if (Math.abs(rx - (jx - 2.0)) < minDist) {
+                minDist = Math.abs(rx - (jx - 2.0));
+                bestBerth = { ros_x: isParallel ? jx - 3.6 : jx - 5.5, ros_y: ry };
+            }
+            if (Math.abs(rx - (jx + 2.0)) < minDist) {
+                minDist = Math.abs(rx - (jx + 2.0));
+                bestBerth = { ros_x: isParallel ? jx + 3.6 : jx + 5.5, ros_y: ry };
+            }
+        }
+    });
+    return bestBerth;
+}
+
 // Mode 3 berth detection — given a map click already converted to ROS
 // coordinates (rx, ry) and the user's parking-style choice, finds the
 // nearest pier/jetty face within snap distance, validates it's not already
