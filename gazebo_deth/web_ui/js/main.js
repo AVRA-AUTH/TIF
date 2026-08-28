@@ -105,6 +105,8 @@ function draw() {
     camera.lookAt(boatPos.x, 0.8, -boatPos.y);
 
     renderer.render(scene, camera);
+    detectionOverlayCtx.drawImage(renderer.domElement, 0, 0, detectionOverlayCanvas.width, detectionOverlayCanvas.height);
+    drawDetectionOverlay();
 
     requestAnimationFrame(draw);
 }

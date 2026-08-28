@@ -19,6 +19,14 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 container3d.appendChild(renderer.domElement);
 
+// "3D FPV — Object Detection" panel: rather than a second live WebGL
+// renderer (which doubles GPU cost and risks its own context issues), each
+// frame just copies the already-rendered FPV canvas onto this plain 2D
+// canvas, then draws detection boxes on top of that copy (see
+// detection-overlay.js and main.js's draw()).
+const detectionOverlayCanvas = document.getElementById('detectionOverlayCanvas');
+const detectionOverlayCtx = detectionOverlayCanvas.getContext('2d');
+
 // Lighting System
 scene.add(new THREE.AmbientLight(0xffffff, 1.1));
 const sunLight = new THREE.DirectionalLight(0xfffaed, 1.3);

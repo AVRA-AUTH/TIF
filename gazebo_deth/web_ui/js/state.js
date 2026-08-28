@@ -15,6 +15,11 @@ let activeAppMode = 1;
 
 let activeBerthIdx = 1; // Default to Berth #2 Side Parking
 let entities = [];
+// Static marina scenery detection targets (moored boats), fed by
+// scene-marina.js's createMooredBoat() and read by detection-overlay.js.
+// Separate from `entities`/`threeEntities`: those track things the player
+// can place or that move, while the marina is fixed scenery built once.
+const staticDetections = [];
 let plannedPath = [];
 let isNavigating = false;
 let pathIndex = 0;

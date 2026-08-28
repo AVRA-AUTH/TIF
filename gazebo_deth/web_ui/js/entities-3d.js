@@ -33,6 +33,9 @@ function sync3DEntities() {
                 light.position.set(0, 1.4, 0);
                 buoyGroup.add(light);
 
+                // Detection box should hug the actual buoy body, not the
+                // much larger decorative keep-out ring.
+                buoyGroup.userData.detectionMeshes = [buoyMesh];
                 mesh = buoyGroup;
             } else if (ent.type === 'dynamic') {
                 // Ultra-Realistic Dynamic Patrol Vessel Model
@@ -140,6 +143,9 @@ function sync3DEntities() {
                 wakeMesh.position.set(-3.6, -0.38, 0);
                 obsBoatGroup.add(wakeMesh);
 
+                // Detection box should hug the hull/cabin/bow silhouette,
+                // not the thin mast/antenna/rails or the trailing wake plane.
+                obsBoatGroup.userData.detectionMeshes = [hullMesh, stripeMesh, bowMesh, cabinBase, glassMesh, eng1, eng2];
                 mesh = obsBoatGroup;
             } else if (ent.type === 'goal') {
                 const goalGeo = new THREE.TorusGeometry(1.5, 0.2, 16, 100);

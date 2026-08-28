@@ -106,6 +106,12 @@
                     <div class="panel-header">3D Realistic FPV View (Boat Camera)</div>
                     <div id="threejs-container"></div>
                 </div>
+
+                <!-- 3D FPV View with Object Detection Overlay -->
+                <div class="view-panel">
+                    <div class="panel-header">3D FPV — Object Detection</div>
+                    <canvas id="detectionOverlayCanvas" width="550" height="500"></canvas>
+                </div>
             </div>
         </div>
     </div>
@@ -129,6 +135,7 @@
     <script src="js/scene-marina.js"></script>
     <script src="js/scene-boat.js"></script>
     <script src="js/entities-3d.js"></script>
+    <script src="js/detection-overlay.js"></script>
     <script src="js/render-2d.js"></script>
     <script src="js/navigation.js"></script>
     <script src="js/docking.js"></script>
