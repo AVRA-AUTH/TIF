@@ -34,6 +34,11 @@ const goalTopic = new ROSLIB.Topic({ ros: ros, name: '/goal_pose', messageType: 
 // (W/A/R/D below), bypassing /cmd_vel and the mixer entirely.
 const leftThrustTopic = new ROSLIB.Topic({ ros: ros, name: '/asv_boat/thrusters/left/thrust', messageType: 'std_msgs/Float64' });
 const rightThrustTopic = new ROSLIB.Topic({ ros: ros, name: '/asv_boat/thrusters/right/thrust', messageType: 'std_msgs/Float64' });
+// Tells cmd_vel_thrust_mixer.py to reserve turning-authority headroom on
+// each thruster (see that script's TURN_THRUST_RESERVE_N) — toggled on only
+// for Mode 3 autonomous docking runs (docking.js/lifecycle.js), since it
+// trades top speed for guaranteed turning at any commanded speed.
+const turnReserveTopic = new ROSLIB.Topic({ ros: ros, name: '/asv_boat/turn_reserve_enable', messageType: 'std_msgs/Bool' });
 // Listen to boat Odometry — the sole source of boatPos, unconditionally, in
 // every mode. This used to be gated to "only while Mode 2 or actively
 // navigating" as a minor perf shortcut, but that let boatPos sit frozen on a

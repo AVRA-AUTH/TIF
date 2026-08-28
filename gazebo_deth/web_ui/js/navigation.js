@@ -36,6 +36,23 @@ function update3DPathLine() {
 // gate the original code had, just moved to the call site instead of being
 // the first line of this function, so main.js's own `if` stays visible.
 function runNavigationStep(navDt) {
+        // Mode 1 only: pop an alert the moment the hull actually touches
+        // another ship (moored or patrolling) or a buoy — separate from the
+        // generic island/pier/shore hull-contact backstop further down,
+        // which already handles the physical stop/back-off for ALL solid
+        // obstacles but never tells the user WHAT was hit. Latched on
+        // shipCollisionAlertShown so this fires once per contact rather than
+        // spamming alert() every frame the hull stays touching.
+        if (activeAppMode === 1) {
+            const hit = isTouchingShipOrBuoyAt(boatPos.x, boatPos.y);
+            if (hit && !shipCollisionAlertShown) {
+                shipCollisionAlertShown = true;
+                alert(hit === 'ship' ? '🚢 Ship Collided! You crashed into another vessel.' : '🛟 Ship Collided! You hit a buoy.');
+            } else if (!hit) {
+                shipCollisionAlertShown = false;
+            }
+        }
+
         const now = Date.now();
         // Receding Horizon Sensor Scan: Recalculate path live every 250ms based on local 25m sensor horizon.
         // Mode 3 docking used to be fully excluded from this — its own
@@ -144,13 +161,59 @@ function runNavigationStep(navDt) {
                 dist = Math.hypot(dx, dy);
                 nextTarget = transitWaypoints[ilos.seg + 1];
 
+                // COLREGS (colregs.js, ported from the user's Python
+                // VO_collision_avoidance source): is there a nearby dynamic
+                // ship where this boat is give-way (or the encounter is
+                // head-on, where BOTH vessels must turn starboard)? If so,
+                // restrict localCorrectedYaw()'s fan below to starboard-turn
+                // candidates only — never let the "avoid a fresh obstacle"
+                // correction cut across the other vessel's bow to port. Only
+                // dynamic ships are COLREGS encounters; static buoys aren't
+                // vessels and don't have a heading/give-way side. Cheap
+                // per-tick loop over `entities` (already bounded by however
+                // many the user has placed), same sensor horizon (25m) as
+                // the live replan above.
+                let colregsGiveWay = false;
+                let colregsSituation = null;
+                for (const ent of entities) {
+                    if (ent.type !== 'dynamic' || ent.isCrashed || ent.heading === undefined) continue;
+                    if (Math.hypot(ent.ros_x - boatPos.x, ent.ros_y - boatPos.y) > 25.0) continue;
+                    const bearingDeg = relativeBearingDeg(boatPos.x, boatPos.y, boatPos.yaw, ent.ros_x, ent.ros_y);
+                    const situation = encounterSituation(boatPos.yaw, ent.heading, bearingDeg);
+                    if (situation === 'Head-on' || isGiveWayShip(situation, bearingDeg, Math.abs(currentLinear), ent.speed || 0)) {
+                        colregsGiveWay = true;
+                        colregsSituation = situation;
+                        break;
+                    }
+                }
+
+                // Testing/visibility aid: this is otherwise invisible (it only
+                // restricts WHICH candidate headings localCorrectedYaw() below
+                // tries, not a new obstacle check of its own) — surface it on
+                // the existing tele-status HUD so give-way engagement can
+                // actually be seen live, same element input.js's Run button
+                // and the docking states below already drive. Left untouched
+                // during docking (isAutoDocking owns tele-status there).
+                if (!isAutoDocking) {
+                    const teleStatusEl = document.getElementById('tele-status');
+                    if (teleStatusEl) {
+                        if (colregsGiveWay) {
+                            teleStatusEl.textContent = `🧭 COLREGS Give-Way (${colregsSituation}) — Starboard Only`;
+                            teleStatusEl.style.color = '#ff66cc';
+                        } else if (teleStatusEl.textContent.startsWith('🧭')) {
+                            teleStatusEl.textContent = '▶️ Navigating...';
+                            teleStatusEl.style.color = '#00ffcc';
+                        }
+                    }
+                }
+
                 // Lightweight tick-rate local correction (DWA-style fan of
                 // candidate headings, localCorrectedYaw() above) layered
                 // under ILOS's heading — catches a fresh obstacle or
                 // disturbance-induced drift immediately instead of waiting
                 // for the next 250ms global replan. No-op when ILOS's own
                 // heading is already clear.
-                targetYaw = localCorrectedYaw(boatPos.x, boatPos.y, currentLinear, ilos.psi_d, entities);
+                targetYaw = localCorrectedYaw(boatPos.x, boatPos.y, currentLinear, ilos.psi_d, entities, colregsGiveWay);
 
                 // Same tolerances the old per-point advance used for a
                 // standard/docking transit leg — only checked against the
@@ -251,6 +314,9 @@ function runNavigationStep(navDt) {
                         document.getElementById('tele-status').textContent = '🟢 STATE 3: Creep Insertion...';
                         document.getElementById('tele-status').style.color = '#00ff00';
                     }
+                    // Hard ceiling, independent of MAX_LINEAR_FWD/REV — only
+                    // 'transit' (2.49 m/s) actually exceeds this today.
+                    cruiseSpeed = Math.max(-DOCK_MAX_SPEED, Math.min(DOCK_MAX_SPEED, cruiseSpeed));
                 }
 
                 // Heading lock: hold position and turn first when badly
@@ -310,33 +376,26 @@ function runNavigationStep(navDt) {
                 if (pivotOnly) {
                     currentLinear = approachVelocity(currentLinear, 0.0, navDt);
                 } else {
-                    const brakeDist = (currentLinear * currentLinear) / (2 * brakeDecel);
-                    if (dist > brakeDist) {
-                        // Plenty of room — cruise (accelerating toward it via THRUST_RAMP_RATE
-                        // if not already there)
-                        currentLinear = approachVelocity(currentLinear, cruiseSpeed, navDt);
-                    } else {
-                        // Inside the braking window: decelerate at brakeDecel directly,
-                        // rather than through approachVelocity's hardcoded
-                        // WATER_FRICTION_RATE — the rate used to decide WHEN to start
-                        // braking has to match the rate actually applied, or a gentler
-                        // brakeDecel here would never actually produce the longer glide
-                        // the brakeDist above was computed for.
-                        const step = brakeDecel * navDt;
-                        if (Math.abs(currentLinear) <= step) {
-                            currentLinear = 0;
-                        } else {
-                            currentLinear -= Math.sign(currentLinear) * step;
-                        }
-                        // Safety net: if there's somehow still less room than this needs
-                        // (e.g. the path got recalculated mid-leg), brake harder with
-                        // reverse thrust instead of overshooting.
-                        const requiredDecel = (currentLinear * currentLinear) / (2 * Math.max(dist, 0.05));
-                        if (requiredDecel > brakeDecel * 2.0 && Math.abs(currentLinear) > 0.05) {
-                            const reverseTarget = -Math.sign(currentLinear) * Math.min(Math.abs(MAX_LINEAR_REV), 1.0);
-                            currentLinear = approachVelocity(currentLinear, reverseTarget, navDt);
-                        }
-                    }
+                    // Speed cap consistent with stopping exactly at the target under
+                    // brakeDecel (v = sqrt(2*a*d)) — the SAME graduated-braking formula
+                    // boundaries.js already uses for the island/shore/marina keep-outs
+                    // ("real stopping-distance kinematics"), recomputed fresh from the
+                    // live `dist` every frame instead of open-loop-decremented from a
+                    // separately-computed brakeDist. The old two-branch version (cruise
+                    // until inside brakeDist, then subtract a fixed step, with a
+                    // "requiredDecel too high" fallback that slammed in up to -1.0 m/s
+                    // of reverse thrust) could overshoot the fallback's trigger,
+                    // reverse away from the target, re-enter the "plenty of room, cruise
+                    // toward cruiseSpeed" branch, and repeat — a real bang-bang limit
+                    // cycle, which is what read as the boat "going front and back" and
+                    // never settling right at the target. Recomputing the cap directly
+                    // from real remaining distance every frame is self-correcting by
+                    // construction and can't develop that cycle: far away it just
+                    // reduces to cruiseSpeed (sqrt term is large), and near the target it
+                    // smoothly converges to 0, never needing a separate reverse fallback.
+                    const maxSpeedForStop = Math.sqrt(Math.max(0, 2 * brakeDecel * dist));
+                    const speedTarget = Math.sign(cruiseSpeed) * Math.min(Math.abs(cruiseSpeed), maxSpeedForStop);
+                    currentLinear = approachVelocity(currentLinear, speedTarget, navDt);
                 }
                 currentLinear = Math.max(MAX_LINEAR_REV, Math.min(MAX_LINEAR_FWD, currentLinear));
 
@@ -393,6 +452,10 @@ function runNavigationStep(navDt) {
             if (isAutoDocking) {
                 isAutoDocking = false;
                 dockingTarget = null;
+                // Docking run finished on its own (not via Reset/mode-switch,
+                // which already turn this off in resetBoatToPose()) — turn
+                // the Mode-3-only turn-thrust-reserve back off now.
+                turnReserveTopic.publish(new ROSLIB.Message({ data: false }));
                 document.getElementById('tele-status').textContent = `🎉 DOCKED SAFELY: ${dockingBerthName}!`;
                 document.getElementById('tele-status').style.color = '#28a745';
             } else {

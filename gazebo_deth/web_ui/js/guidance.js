@@ -67,9 +67,16 @@ function ilosGuidance(x, y, waypoints, state, dt) {
 // Returns the safest heading near `preferredYaw`; a no-op when that heading
 // is already clear (checked first, so this matches ILOS/the planned heading
 // exactly in the common case).
-function localCorrectedYaw(x, y, speed, preferredYaw, obstacles) {
+//
+// restrictToStarboard (colregs.js): when the nav loop determines this boat is
+// COLREGS give-way (or the encounter is head-on) against a nearby dynamic
+// ship, only the 0/starboard-turning offsets are tried — never a port turn
+// that would cut across the other vessel's bow. Falls back to preferredYaw,
+// same as the unrestricted fan, if none of those are clear.
+function localCorrectedYaw(x, y, speed, preferredYaw, obstacles, restrictToStarboard) {
     const travel = Math.max(Math.abs(speed), 0.5) * DWA_LOOKAHEAD_SEC; // assume at least a slow crawl so this still looks ahead near a stop
-    for (const offset of DWA_HEADING_OFFSETS) {
+    const offsets = restrictToStarboard ? DWA_HEADING_OFFSETS.filter(o => o <= 0) : DWA_HEADING_OFFSETS;
+    for (const offset of offsets) {
         const candidateYaw = preferredYaw + offset;
         const endX = x + Math.cos(candidateYaw) * travel;
         const endY = y + Math.sin(candidateYaw) * travel;

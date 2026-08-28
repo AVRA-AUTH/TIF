@@ -24,6 +24,7 @@ function resetBoatToPose(pose) {
     ilosState = { k: 1, y_int: 0 };
     currentLinear = 0.0;
     currentAngular = 0.0;
+    shipCollisionAlertShown = false;
 
     boatPos = { x: pose.x, y: pose.y, yaw: pose.yaw, speed: 0 };
     // Give the backend's async 'set_pose' teleport time to actually land in
@@ -45,6 +46,11 @@ function resetBoatToPose(pose) {
     spawnTopic.publish(new ROSLIB.Message({
         data: JSON.stringify({ type: 'set_pose', x: pose.x, y: pose.y, yaw: pose.yaw })
     }));
+
+    // Called on every mode switch and Reset — always leave the Mode-3-only
+    // turn-thrust-reserve (see docking.js/cmd_vel_thrust_mixer.py) off
+    // outside of an active docking run.
+    turnReserveTopic.publish(new ROSLIB.Message({ data: false }));
 }
 
 // Clears everything placed in Mode 1 (buoys, moving boats, the goal marker)

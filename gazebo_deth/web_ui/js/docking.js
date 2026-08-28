@@ -156,6 +156,13 @@ function startDynamicDocking(chosen) {
     isNavigating = false;
     isAutoDocking = true;
     dockingBerthName = chosen.name;
+    // Full turn-thrust-reserve, Mode 3 only (see cmd_vel_thrust_mixer.py):
+    // guarantees the boat can always turn at its full MAX_ANGULAR rate,
+    // even at commanded cruise speed, at the cost of a lower real top speed
+    // for the whole docking run (transit + docking legs alike). Turned back
+    // off in lifecycle.js's resetBoatToPose() and navigation.js's
+    // docking-complete branch.
+    turnReserveTopic.publish(new ROSLIB.Message({ data: true }));
 
     if (dynamic3DBerthMesh) {
         dynamic3DBerthMesh.position.set(chosen.ros_x, 0.4, -chosen.ros_y);
@@ -235,6 +242,21 @@ function startDynamicDocking(chosen) {
 const resetDockBtn = document.getElementById('btn-reset-dock');
 if (resetDockBtn) {
     resetDockBtn.addEventListener('click', () => {
-        document.getElementById('btn-reset').click();
+        // Cancel any in-progress docking run and snap back to Mode 3's own
+        // start pose (the fairway entrance) — must NOT reuse btn-reset's
+        // handler (Mode 1's Reset): that resets to MODE1_START, clears Mode
+        // 1's design entities, and stamps "Design Phase" onto the telemetry
+        // panel, none of which belong to Mode 3.
+        resetBoatToPose(MODE3_START);
+        dockingBerthName = '';
+
+        const statusEl = document.getElementById('tele-status');
+        if (statusEl) {
+            statusEl.textContent = '⚓ Idle — Fairway Entrance';
+            statusEl.style.color = '#ffc107';
+        }
+        document.getElementById('tele-x').textContent = MODE3_START.x.toFixed(2);
+        document.getElementById('tele-y').textContent = MODE3_START.y.toFixed(2);
+        document.getElementById('tele-speed').textContent = '0.00';
     });
 }

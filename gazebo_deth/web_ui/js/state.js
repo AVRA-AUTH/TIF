@@ -15,6 +15,11 @@ let activeAppMode = 1;
 
 let activeBerthIdx = 1; // Default to Berth #2 Side Parking
 let entities = [];
+// Static marina scenery detection targets (moored boats), fed by
+// scene-marina.js's createMooredBoat() and read by detection-overlay.js.
+// Separate from `entities`/`threeEntities`: those track things the player
+// can place or that move, while the marina is fixed scenery built once.
+const staticDetections = [];
 let plannedPath = [];
 let isNavigating = false;
 let pathIndex = 0;
@@ -34,6 +39,9 @@ let threePathLine = null;
 // needs: {alignX, alignY, chosen}. Set there, cleared whenever a docking run
 // ends (goal reached, Reset, mode switch).
 let dockingTarget = null;
+// Mode 1 ship/buoy collision popup (navigation.js) — latched so the alert()
+// fires once per contact instead of every frame the hull stays touching.
+let shipCollisionAlertShown = false;
 
 let isAutoDocking = false;
 let dockingBerthName = '';

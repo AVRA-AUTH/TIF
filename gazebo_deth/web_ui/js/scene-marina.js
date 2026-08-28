@@ -52,6 +52,10 @@ function createMooredBoat(x, z, hullColor, boatType = 'yacht') {
     hull.position.y = 0.2;
     bGroup.add(hull);
 
+    // Detection box hugs the hull (+ cabin, when present); the tall thin
+    // sailboat mast is excluded so it doesn't stretch the box unrealistically.
+    const detectionMeshes = [hull];
+
     if (isSailboat) {
         // Tall Sailboat Mast
         const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.07, 7.5, 8), new THREE.MeshStandardMaterial({ color: 0xdddddd }));
@@ -62,10 +66,12 @@ function createMooredBoat(x, z, hullColor, boatType = 'yacht') {
         const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.7, 1.05), new THREE.MeshStandardMaterial({ color: 0xffffff }));
         cabin.position.set(-0.2, 0.7, 0);
         bGroup.add(cabin);
+        detectionMeshes.push(cabin);
     }
 
     bGroup.position.set(x, 0.2, z);
     bGroup.rotation.y = 0; // Parked horizontally into berth
+    staticDetections.push({ detectionMeshes, label: 'Boat', hex: hullColor });
 
     // Register physical collision obstacle (isParkedShip avoids yellow buoy rings)
     entities.push({ id: 'moored_' + x + '_' + z, type: 'static', isParkedShip: true, ros_x: x, ros_y: -z });

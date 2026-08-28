@@ -49,30 +49,13 @@ document.querySelectorAll('.tool-btn').forEach(btn => {
     });
 });
 
-canvas.addEventListener('click', (e) => {
-    const rect = canvas.getBoundingClientRect();
-    const cx = e.clientX - rect.left;
-    const cy = e.clientY - rect.top;
-    let { rx, ry } = canvasToRos(cx, cy);
-
-    // In Mode 3, click near any pier edge to calculate dynamic autonomous parking
-    if (activeAppMode === 3) {
-        const dockTypeSel = document.getElementById('dock-type-selector');
-        const isParallel = dockTypeSel ? (dockTypeSel.value === 'parallel') : true;
-
-        // Berth detection/validation moved to docking.js's detectBerthAtClick()
-        // (same logic, same alert() messages on an invalid/occupied/blocked
-        // spot — it returns null in those cases instead of returning here).
-        const bestBerth = detectBerthAtClick(rx, ry, isParallel);
-        if (!bestBerth) return;
-
-        // Start Dynamic Docking Sequence!
-        startDynamicDocking(bestBerth);
-        return;
-    }
-
-    if (activeAppMode !== 1 || !currentMode) return;
-
+// Shared by both placement surfaces (2D tactical map below, and the 3D FPV
+// view further down) — clamps a raw ROS-frame click point to Mode 1's
+// open-water/island constraints, then either sets the goal or spawns a new
+// buoy/dynamic-boat entity (both locally and on the real Gazebo backend via
+// spawnTopic), exactly as the 2D map click handler always did. Callers are
+// responsible for their own activeAppMode/currentMode gating first.
+function placeMode1EntityAt(rx, ry) {
     // Enforce Lake Open-Water Constraints (Keep goals & buoys inside water body).
     // 330 keeps the same ~5% margin inside LAKE_RADIUS's own 350 pre-scale
     // reference that the old 285/300 pair had.
@@ -111,6 +94,58 @@ canvas.addEventListener('click', (e) => {
         });
         spawnTopic.publish(msg);
     }
+}
+
+canvas.addEventListener('click', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+    let { rx, ry } = canvasToRos(cx, cy);
+
+    // In Mode 3, click near any pier edge to calculate dynamic autonomous parking
+    if (activeAppMode === 3) {
+        const dockTypeSel = document.getElementById('dock-type-selector');
+        const isParallel = dockTypeSel ? (dockTypeSel.value === 'parallel') : true;
+
+        // Berth detection/validation moved to docking.js's detectBerthAtClick()
+        // (same logic, same alert() messages on an invalid/occupied/blocked
+        // spot — it returns null in those cases instead of returning here).
+        const bestBerth = detectBerthAtClick(rx, ry, isParallel);
+        if (!bestBerth) return;
+
+        // Start Dynamic Docking Sequence!
+        startDynamicDocking(bestBerth);
+        return;
+    }
+
+    if (activeAppMode !== 1 || !currentMode) return;
+    placeMode1EntityAt(rx, ry);
+});
+
+// Place obstacles/goal directly in the 3D FPV camera view, same tool
+// selection (🟡/🚢/🏁) as the 2D tactical map — click a spot in the 3D view
+// and it raycasts against the water plane (y=0) using the SAME `camera` that
+// follows the boat (scene-environment.js), turning the click into a ROS-frame
+// (x, y) point the exact same way canvasToRos() does for the 2D map (Three.js
+// z = -ROS y, matching every mesh placement in this codebase, e.g. boatGroup/
+// entities-3d.js). Reuses placeMode1EntityAt() so both views share the exact
+// same clamping/spawn/publish logic — clicking either view has identical
+// effect on the actual simulation.
+const raycaster = new THREE.Raycaster();
+const raycastMouse = new THREE.Vector2();
+const waterPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+renderer.domElement.addEventListener('click', (e) => {
+    if (activeAppMode !== 1 || !currentMode) return;
+
+    const rect = renderer.domElement.getBoundingClientRect();
+    raycastMouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    raycastMouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+    raycaster.setFromCamera(raycastMouse, camera);
+    const hit = new THREE.Vector3();
+    if (!raycaster.ray.intersectPlane(waterPlane, hit)) return; // camera looking away from the water plane
+
+    placeMode1EntityAt(hit.x, -hit.z);
 });
 
 // ▶️ RUN ASV DEMO Button
@@ -179,12 +214,18 @@ const mode1Tools = document.getElementById('mode1-tools');
 const mode2Tools = document.getElementById('mode2-tools');
 const mode3Tools = document.getElementById('mode3-tools');
 
+// Persisted across reloads (see the restore block below this) so refreshing
+// the page returns to whichever mode was active beforehand, at that mode's
+// own starting pose, instead of always reloading into Mode 1.
+const ACTIVE_MODE_STORAGE_KEY = 'avraActiveMode';
+
 if (mode1Btn) {
     mode1Btn.addEventListener('click', () => {
         if (activeAppMode === 2) stopThrusters();
         activeAppMode = 1;
         resetBoatToPose(MODE1_START);
         clearMode1Design();
+        localStorage.setItem(ACTIVE_MODE_STORAGE_KEY, '1');
         mode1Btn.classList.add('active');
         if (mode2Btn) mode2Btn.classList.remove('active');
         if (mode3Btn) mode3Btn.classList.remove('active');
@@ -201,6 +242,7 @@ if (mode2Btn) {
         activeAppMode = 2;
         resetBoatToPose(MODE2_START);
         clearMode1Design();
+        localStorage.setItem(ACTIVE_MODE_STORAGE_KEY, '2');
         mode2Btn.classList.add('active');
         if (mode1Btn) mode1Btn.classList.remove('active');
         if (mode3Btn) mode3Btn.classList.remove('active');
@@ -217,6 +259,7 @@ if (mode3Btn) {
         activeAppMode = 3;
         resetBoatToPose(MODE3_START);
         clearMode1Design();
+        localStorage.setItem(ACTIVE_MODE_STORAGE_KEY, '3');
         mode3Btn.classList.add('active');
         if (mode1Btn) mode1Btn.classList.remove('active');
         if (mode2Btn) mode2Btn.classList.remove('active');
@@ -226,6 +269,17 @@ if (mode3Btn) {
         if (dofPanel) dofPanel.style.display = 'block';
     });
 }
+
+// Restore whichever mode was active before a refresh. state.js already
+// boots activeAppMode/boatPos at Mode 1's own start pose, so only 2/3 need
+// to replay their button's full switch logic (pose reset, tool-panel
+// visibility, active-button highlight). Guarded in case a browser has
+// localStorage disabled (throws instead of returning null).
+try {
+    const savedMode = localStorage.getItem(ACTIVE_MODE_STORAGE_KEY);
+    if (savedMode === '2' && mode2Btn) mode2Btn.click();
+    else if (savedMode === '3' && mode3Btn) mode3Btn.click();
+} catch (e) { /* localStorage unavailable — just stay on Mode 1's default start */ }
 
 // Mode 2 Controls: continuous thruster + water-friction velocity model.
 // A held control ramps quickly toward its fixed end velocity (thrusters
@@ -291,9 +345,17 @@ bindThruster(document.getElementById('btn-down'), 'rev');
 bindThruster(document.getElementById('btn-left'), 'left');
 bindThruster(document.getElementById('btn-right'), 'right');
 
+// Mode 2's STOP button — not just a thruster kill, also snaps the boat back
+// to Mode 2's own starting pose, same "stop == back to this mode's start"
+// behavior as Mode 1's btn-reset and Mode 3's btn-reset-dock.
+function stopAndResetMode2() {
+    stopThrusters();
+    resetBoatToPose(MODE2_START);
+}
+
 const btnStop = document.getElementById('btn-stop');
 if (btnStop) {
-    btnStop.addEventListener('click', stopThrusters);
+    btnStop.addEventListener('click', stopAndResetMode2);
 }
 
 window.addEventListener('keydown', (e) => {
