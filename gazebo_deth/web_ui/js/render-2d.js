@@ -153,6 +153,23 @@ function renderMarina2D(mapScale) {
         ctx.fillText('⚓ Selected Berth', bp.x, bp.y - 16);
         ctx.restore();
     }
+        // Hover Preview: highlight the nearest valid docking spot under the cursor,
+    // before the user actually clicks (Mode 3 only). hoveredBerth is set by
+    // input.js's mousemove listener; guarded with typeof since this file
+    // loads before input.js declares it (only matters at call-time, which
+    // happens later in the draw() loop, by when it always exists).
+    if (activeAppMode === 3 && typeof hoveredBerth !== 'undefined' && hoveredBerth) {
+        const hp = rosToCanvas(hoveredBerth.ros_x, hoveredBerth.ros_y);
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(hp.x, hp.y, 10, 0, 2 * Math.PI);
+        ctx.strokeStyle = '#00ffcc';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(0, 255, 204, 0.15)';
+        ctx.fill();
+        ctx.restore();
+    }
 
     // Label Text
     ctx.font = 'bold 10px sans-serif';
