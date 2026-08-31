@@ -33,6 +33,32 @@ const WORLD_SCALE = 0.4;
 // no real hardware basis).
 const MAX_LINEAR_FWD = 2.49;     // top forward speed (m/s) — real T200 @16V
 const MAX_LINEAR_REV = -2.19;    // top reverse speed (m/s) — real T200 @16V
+
+// Hull surge-drag coefficients MAX_LINEAR_FWD/REV above were solved from
+// (xU*v + xUU*v^2 = thrust) — mirrors exhibition_water.sdf's <xU>/<xUU>
+// exactly. Re-exposed here so dof-panel.js's live thrust readout can run the
+// same equation in reverse (thrust from measured speed) instead of a second,
+// driftable copy of the number.
+const HULL_DRAG_LINEAR = 1.05;     // xU
+const HULL_DRAG_QUADRATIC = 16.24; // xUU
+
+// T200-at-16V current draw at full commanded thrust, from the same
+// datasheet sweep (voltages=[10,12,14,16], 16V row) MAX_LINEAR_FWD/REV were
+// sourced from — full-throttle rows only (1900us/1100us PWM): 23.83A @ full
+// forward, 24.30A @ full reverse. Used by dof-panel.js's live thrust readout
+// to estimate current/power at partial throttle via linear interpolation
+// from 0A — NOT the datasheet's own curve, which is markedly non-linear and
+// noisy near the neutral dead-band (efficiency readings there spike past
+// 100 g/W, an artifact of near-zero current, not a real operating point).
+// A straight two-point interpolation between idle and full-throttle is a
+// deliberate simplification: close enough for a ballpark current/power
+// readout, but NOT accurate enough to also derive an efficiency/"% battery
+// wasted" figure from — that would need the real mid-throttle curve, which
+// this reference doesn't reliably give us. So the readout stops at current/
+// power and does not claim an efficiency number.
+const T200_MAX_CURRENT_FWD_A = 23.83; // @ full fwd PWM, 16V
+const T200_MAX_CURRENT_REV_A = 24.30; // @ full rev PWM, 16V
+const BATTERY_VOLTAGE_V = 16.0;
 const MAX_ANGULAR = 1.2;         // top turn rate (rad/s)
 const THRUST_RAMP_RATE = 6.0;    // units/sec: how fast velocity reaches its target while a thruster is held open
 const WATER_FRICTION_RATE = 1.0; // units/sec: how fast velocity decays toward zero once released

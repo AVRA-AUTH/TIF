@@ -56,3 +56,4 @@ let lastPublishedLinear = 0.0;
 let lastPublishedAngular = 0.0;
 let lastPublishedLeftThrust = 0.0;
 let lastPublishedRightThrust = 0.0;
+let manualThrustOverrideActive = false; // mirrors what was last sent on manualOverrideTopic

@@ -10,7 +10,13 @@
 // the render loop to already be running).
 
 let hoveredBerth = null;
-let boatSpeedMultiplier = 1.0; // 0.5 slow, 1.0 medium, 1.6 fast
+// 0.4 slow, 0.6 medium, 1.0 fast — fractions of real max thrust (see
+// config.js's MAX_LINEAR_FWD/REV and THRUSTER_MAX_FWD_N/MIN_REV_N). Fast
+// stops at 1.0, not higher: the previous 1.6 asked the combined drive for
+// 3.98 m/s, a target this boat's real T200s can't reach (they saturate at
+// the same ~2.49 m/s "medium" already hits — see /cmd_vel_thrust_mixer.py's
+// KP_LINEAR clamp), so "fast" had zero effect beyond medium.
+let boatSpeedMultiplier = 0.6;
 
 canvas.addEventListener('mousemove', (e) => {
     if (activeAppMode !== 3) { hoveredBerth = null; return; }
@@ -25,17 +31,17 @@ canvas.addEventListener('mousemove', (e) => {
 
 
 document.getElementById('speed-slow')?.addEventListener('click', () => {
-    boatSpeedMultiplier = 0.5;
+    boatSpeedMultiplier = 0.4;
     document.querySelectorAll('#mode2-tools .dbtn').forEach(b => b.classList.remove('active'));
     document.getElementById('speed-slow').classList.add('active');
 });
 document.getElementById('speed-medium')?.addEventListener('click', () => {
-    boatSpeedMultiplier = 1.0;
+    boatSpeedMultiplier = 0.6;
     document.querySelectorAll('#mode2-tools .dbtn').forEach(b => b.classList.remove('active'));
     document.getElementById('speed-medium').classList.add('active');
 });
 document.getElementById('speed-fast')?.addEventListener('click', () => {
-    boatSpeedMultiplier = 1.6;
+    boatSpeedMultiplier = 1.0;
     document.querySelectorAll('#mode2-tools .dbtn').forEach(b => b.classList.remove('active'));
     document.getElementById('speed-fast').classList.add('active');
 });
@@ -328,6 +334,13 @@ function stopThrusters() {
     publishThrust(rightThrustTopic, 0.0);
     lastPublishedLeftThrust = 0.0;
     lastPublishedRightThrust = 0.0;
+    // Safety-net path (blur/reset) — release the mixer override here too, or
+    // losing focus mid-W/R-press would leave cmd_vel_thrust_mixer.py paused
+    // forever with no thruster key left held to ever trigger the release above.
+    if (manualThrustOverrideActive) {
+        manualThrustOverrideActive = false;
+        manualOverrideTopic.publish(new ROSLIB.Message({ data: false }));
+    }
 }
 
 // On-screen D-pad: press-and-hold, matching keyboard behavior
@@ -390,6 +403,15 @@ function thrusterLoop() {
         // Independent per-thruster control takes priority over the combined
         // arrow-key drive whenever any W/A/R/D is held, so the two schemes
         // never both publish to the same thrust topics in the same frame.
+        // Tell cmd_vel_thrust_mixer.py to stand down too — its 20Hz timer
+        // otherwise keeps publishing to these same thrust topics from a
+        // stale /cmd_vel target the whole time a thruster key is held,
+        // fighting whatever's commanded below (only sent once per
+        // press/release transition, not every frame).
+        if (!manualThrustOverrideActive) {
+            manualThrustOverrideActive = true;
+            manualOverrideTopic.publish(new ROSLIB.Message({ data: true }));
+        }
         // Instant on/off, no ramp — real Gazebo physics does all the
         // shaping, same principle as the combined drive's instant-cutoff
         // fix below. Both directions are scaled by the same graduated
@@ -400,8 +422,12 @@ function thrusterLoop() {
         // that boundary — the escape direction is always left at full
         // strength, so getting braked to a stop never also blocks getting
         // away.
-        const fwdThrustScale = Math.max(0, Math.min(1, boundaryCappedSpeed(1, MAX_LINEAR_FWD) / MAX_LINEAR_FWD));
-        const revThrustScale = Math.max(0, Math.min(1, boundaryCappedSpeed(-1, Math.abs(MAX_LINEAR_REV)) / Math.abs(MAX_LINEAR_REV)));
+        // boatSpeedMultiplier applies here too (it didn't before — the speed
+        // presets had no effect at all on W/A/R/D, only on the arrow-key
+        // drive), so both control schemes honor the same slow/medium/fast
+        // choice instead of W/A/R/D silently always running at full thrust.
+        const fwdThrustScale = Math.max(0, Math.min(1, boundaryCappedSpeed(1, MAX_LINEAR_FWD) / MAX_LINEAR_FWD)) * boatSpeedMultiplier;
+        const revThrustScale = Math.max(0, Math.min(1, boundaryCappedSpeed(-1, Math.abs(MAX_LINEAR_REV)) / Math.abs(MAX_LINEAR_REV))) * boatSpeedMultiplier;
         let leftThrust = heldThrusterKeys.has('leftFwd') ? THRUSTER_MAX_FWD_N * fwdThrustScale
             : heldThrusterKeys.has('leftRev') ? THRUSTER_MIN_REV_N * revThrustScale : 0.0;
         let rightThrust = heldThrusterKeys.has('rightFwd') ? THRUSTER_MAX_FWD_N * fwdThrustScale
@@ -458,7 +484,16 @@ function thrusterLoop() {
             lastPublishedLeftThrust = 0.0;
             lastPublishedRightThrust = 0.0;
         }
-        
+
+        // Hand control of the thrust topics back to cmd_vel_thrust_mixer.py
+        // now that no thruster key is held — mirrors the override=true sent
+        // above on entry, so the mixer's timer only ever sits out exactly
+        // the span a thruster key was actually down.
+        if (manualThrustOverrideActive) {
+            manualThrustOverrideActive = false;
+            manualOverrideTopic.publish(new ROSLIB.Message({ data: false }));
+        }
+
         // FWD/REV demand ceilings are now real hardware-derived equilibrium
         // speeds (see MAX_LINEAR_FWD/MAX_LINEAR_REV above), not arbitrary
         // software targets — no reason left to uncap these for experiments,
@@ -468,8 +503,20 @@ function thrusterLoop() {
         // out at open sea, it only bites within a boundary's braking zone. The
         // OTHER direction (the escape route) is left uncapped, so braking to a
         // stop near either boundary never also blocks getting away from it.
-        const targetLinear = heldAxes.has('fwd') ? boundaryCappedSpeed(1, MAX_LINEAR_FWD * boatSpeedMultiplier)
-            : heldAxes.has('rev') ? -boundaryCappedSpeed(-1, Math.abs(MAX_LINEAR_REV) * boatSpeedMultiplier)
+        // boatSpeedMultiplier is a THRUST fraction (same meaning W/A/R/D
+        // gives it — see fwdThrustScale/revThrustScale above), not a speed
+        // fraction: MAX_LINEAR_FWD*multiplier used to be commanded directly
+        // as the velocity target, but because drag is quadratic, "60% of
+        // top speed" only takes ~37% of top thrust — so the two control
+        // schemes' identical-looking slow/medium/fast presets landed on
+        // genuinely different real-world speeds (confirmed empirically:
+        // arrows settled ~40% thrust vs W/R's exact 60% at the "medium"
+        // preset). speedForThrust() solves the same drag equation
+        // MAX_LINEAR_FWD/REV themselves come from, in reverse, to find the
+        // velocity that actually draws that fraction of max combined
+        // thrust, so both schemes now agree.
+        const targetLinear = heldAxes.has('fwd') ? boundaryCappedSpeed(1, speedForThrust(THRUSTER_MAX_FWD_N * 2 * boatSpeedMultiplier))
+            : heldAxes.has('rev') ? -boundaryCappedSpeed(-1, speedForThrust(Math.abs(THRUSTER_MIN_REV_N) * 2 * boatSpeedMultiplier))
                 : 0.0;
         // EXPERIMENT (still active): turn demand uncapped (was MAX_ANGULAR =
         // 1.2) — same "let real physics decide" test already run on forward

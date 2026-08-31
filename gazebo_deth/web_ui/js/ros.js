@@ -31,9 +31,18 @@ const odomTopic = new ROSLIB.Topic({ ros: ros, name: '/odom', messageType: 'nav_
 const goalTopic = new ROSLIB.Topic({ ros: ros, name: '/goal_pose', messageType: 'geometry_msgs/PoseStamped' });
 // Raw per-thruster topics — same ones cmd_vel_thrust_mixer.py publishes to,
 // but written directly from the browser for independent thruster control
-// (W/A/R/D below), bypassing /cmd_vel and the mixer entirely.
+// (W/A/R/D below), bypassing /cmd_vel. The mixer itself is NOT bypassed by
+// that alone — its 20Hz timer keeps running and publishing to these same
+// topics regardless of what sends /cmd_vel, so without manualOverrideTopic
+// below the two would race on the same topic every tick.
 const leftThrustTopic = new ROSLIB.Topic({ ros: ros, name: '/asv_boat/thrusters/left/thrust', messageType: 'std_msgs/Float64' });
 const rightThrustTopic = new ROSLIB.Topic({ ros: ros, name: '/asv_boat/thrusters/right/thrust', messageType: 'std_msgs/Float64' });
+// Tells cmd_vel_thrust_mixer.py to stop publishing to the thrust topics
+// above while independent thruster control (W/A/R/D) is driving them
+// directly — see that script's manual_override handling. Without this, the
+// mixer's own 20Hz control loop keeps writing to the same two topics from a
+// stale /cmd_vel target, fighting whatever W/A/R/D just commanded.
+const manualOverrideTopic = new ROSLIB.Topic({ ros: ros, name: '/asv_boat/manual_thrust_override', messageType: 'std_msgs/Bool' });
 // Tells cmd_vel_thrust_mixer.py to reserve turning-authority headroom on
 // each thruster (see that script's TURN_THRUST_RESERVE_N) — toggled on only
 // for Mode 3 autonomous docking runs (docking.js/lifecycle.js), since it
@@ -75,6 +84,7 @@ odomTopic.subscribe((msg) => {
     // matching the panel's visibility (Part B).
     const yawRate = msg.twist.twist.angular.z;
     updateDofPanel(boatPos.speed, yawRate);
+    updateThrustReadout(boatPos.speed);
 });
 function sendCmdVel(linear, angular) {
     const twist = new ROSLIB.Message({

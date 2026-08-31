@@ -44,6 +44,35 @@ TRACK_HALF_WIDTH = 0.38
 KP_LINEAR = 51.5 / 2.49  # ~20.68 N per (m/s) of speed error — MAX_THRUST_FWD / MAX_LINEAR_FWD
 KI_LINEAR = 8.0
 
+# Feedforward: this boat's own drag model (xU*v + xUU*v^2 = thrust — mirrors
+# exhibition_water.sdf's <xU>/<xUU> and web_ui/js/config.js's
+# HULL_DRAG_LINEAR/HULL_DRAG_QUADRATIC), added directly to the PI output
+# below as the thrust already known to be needed just to HOLD the commanded
+# speed at steady state.
+#
+# Without it, KP_LINEAR only supplies proportional thrust while error is
+# still large — by design (see above) it desaturates almost immediately
+# after t=0 for ANY target, not just 0.54 m/s — so the entire remaining
+# steady-state thrust has to be built up through KI_LINEAR's slow integral
+# alone. That was fine at Mode 3's 0.54 m/s creep target (needs ~5.3N of
+# steady thrust, closes in a couple seconds — the "pure P settled ~0.45 vs
+# 0.54" comment above is exactly this gap, just small enough at that speed
+# to close quickly). It was never re-tuned for web_ui/js/input.js's newer
+# Mode 2 fast/medium presets: at those targets (1.0-2.49 m/s, needing
+# ~20-51.5N of steady thrust) the same KI_LINEAR=8.0 takes many multiples
+# longer to fully close the gap — tens of seconds, not the ~1-1.3s the
+# boat's own physics (20kg mass, up to 103N combined thrust) actually
+# supports — so the arrow drive visibly "settles" well short of the
+# requested speed for as long as anyone would realistically hold a key.
+#
+# With feedforward supplying the bulk of the steady-state thrust up front,
+# KP/KI only have to trim the transient and any real disturbance, so real
+# convergence now tracks that same ~1-1.3s physical settling time instead of
+# KI_LINEAR's — matching what W/A/R/D's direct (feedforward-only, no PI at
+# all) thrust command already achieves.
+HULL_DRAG_LINEAR = 1.05     # xU
+HULL_DRAG_QUADRATIC = 16.24 # xUU
+
 # Differential-thrust gain: Newtons of thrust *difference* between the two
 # propellers per rad/s of commanded yaw rate. Derived from
 # exhibition_water.sdf's own yaw damping rather than reusing LINEAR_GAIN's
@@ -104,6 +133,7 @@ class CmdVelThrustMixer(Node):
         self.get_logger().info('⚓ /cmd_vel -> thruster mixer initialized (closed-loop speed control).')
 
         self.turn_reserve_enabled = False
+        self.manual_override = False
         self.cmd_linear = 0.0
         self.cmd_angular = 0.0
         self.measured_speed = 0.0
@@ -114,10 +144,25 @@ class CmdVelThrustMixer(Node):
         self.create_subscription(Twist, '/cmd_vel', self.cmd_vel_callback, 10)
         self.create_subscription(Odometry, '/odom', self.odom_callback, 10)
         self.create_subscription(Bool, '/asv_boat/turn_reserve_enable', self.turn_reserve_callback, 10)
+        self.create_subscription(Bool, '/asv_boat/manual_thrust_override', self.manual_override_callback, 10)
         self.create_timer(CONTROL_PERIOD_SEC, self.control_step)
 
     def turn_reserve_callback(self, msg):
         self.turn_reserve_enabled = msg.data
+
+    def manual_override_callback(self, msg):
+        # web_ui/js/input.js's independent thruster control (W/A/R/D) writes
+        # directly to the same /asv_boat/thrusters/left|right/thrust topics
+        # this node publishes to. Without this, control_step() below kept
+        # running regardless — its 20Hz PI loop and the browser's ~60Hz raw
+        # thrust commands raced on the same topics the whole time a thruster
+        # key was held, each overwriting the other unpredictably. Reset the
+        # integral on both edges: stale windup from before the override
+        # shouldn't survive into manual control, and stale windup accrued
+        # *during* the override (error was never checked while paused) would
+        # otherwise cause a spurious kick the instant control resumes.
+        self.manual_override = msg.data
+        self.integral = 0.0
 
     def cmd_vel_callback(self, msg):
         self.cmd_linear = msg.linear.x
@@ -130,6 +175,13 @@ class CmdVelThrustMixer(Node):
         self.measured_speed = msg.twist.twist.linear.x
 
     def control_step(self):
+        if self.manual_override:
+            # web_ui/js/input.js's W/A/R/D control is driving the thrust
+            # topics directly right now — stay out of it entirely (no
+            # publish) rather than racing against it. See
+            # manual_override_callback above.
+            return
+
         # The turn-reserve cap (when enabled) is a NARROWER ceiling than the
         # raw hardware limits — anti-windup below has to check saturation
         # against whichever ceiling is actually in effect this tick, or the
@@ -141,7 +193,16 @@ class CmdVelThrustMixer(Node):
         cap_rev = LINEAR_THRUST_CAP_REV if self.turn_reserve_enabled else MAX_THRUST_REV
 
         error = self.cmd_linear - self.measured_speed
-        linear_thrust = KP_LINEAR * error + KI_LINEAR * self.integral
+        target = self.cmd_linear
+        # HULL_DRAG_LINEAR/QUADRATIC solve for TOTAL thrust (both thrusters
+        # combined — see exhibition_water.sdf's derivation comment: "forward
+        # 2x51.5N=103N -> ~2.49 m/s"), but linear_thrust below is a
+        # PER-THRUSTER command applied identically to both sides (combined =
+        # 2*linear_thrust), so the feedforward has to be halved here.
+        feedforward = (HULL_DRAG_LINEAR * abs(target) + HULL_DRAG_QUADRATIC * target * target) / 2.0
+        if target < 0:
+            feedforward = -feedforward
+        linear_thrust = feedforward + KP_LINEAR * error + KI_LINEAR * self.integral
         pre_clamp = linear_thrust
         linear_thrust = max(cap_rev, min(cap_fwd, linear_thrust))
         if linear_thrust == pre_clamp:
