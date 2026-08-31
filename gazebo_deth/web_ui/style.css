@@ -129,17 +129,23 @@ canvas {
 }
 
 #threejs-container {
+    /* Off-screen rather than display:none: a display:none canvas can stop
+       receiving WebGL draws in some browsers, and this one still needs to
+       render every frame as the Object Detection panel's pixel source. */
+    position: absolute;
+    left: -9999px;
+    top: -9999px;
     width: 550px;
     height: 500px;
-    border-radius: 8px;
     overflow: hidden;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
 }
 
 #detectionOverlayCanvas {
     border-radius: 8px;
     box-shadow: 0 4px 12px rgba(0,0,0,0.5);
-    cursor: default;
+    /* No override here: falls back to the generic canvas rule's
+       cursor: crosshair (same as the 2D map), since this panel is now also
+       clickable for Mode 1 placement. */
 }
 
 /* D-Pad Controls */

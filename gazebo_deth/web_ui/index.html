@@ -108,15 +108,17 @@
                     <canvas id="mapCanvas" width="550" height="500"></canvas>
                 </div>
 
-                <!-- 3D Realistic FPV View -->
-                <div class="view-panel">
-                    <div class="panel-header">3D Realistic FPV View (Boat Camera)</div>
-                    <div id="threejs-container"></div>
-                </div>
+                <!-- Hidden 3D render source: the boat-following camera/scene still
+                     render into this canvas every frame (see main.js's draw()), but
+                     it's no longer shown on its own — the Object Detection panel
+                     below is now the only visible 3D view, copying these pixels via
+                     drawImage. Positioned off-screen (see style.css) rather than
+                     display:none so the WebGL context keeps rendering normally. -->
+                <div id="threejs-container"></div>
 
-                <!-- 3D FPV View with Object Detection Overlay -->
+                <!-- 3D Object Detection Camera (Boat Camera) -->
                 <div class="view-panel">
-                    <div class="panel-header">3D FPV — Object Detection</div>
+                    <div class="panel-header">Object Detection Camera (Boat Camera)</div>
                     <canvas id="detectionOverlayCanvas" width="550" height="500"></canvas>
                 </div>
             </div>

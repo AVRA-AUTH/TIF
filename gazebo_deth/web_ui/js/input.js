@@ -128,22 +128,28 @@ canvas.addEventListener('click', (e) => {
     placeMode1EntityAt(rx, ry);
 });
 
-// Place obstacles/goal directly in the 3D FPV camera view, same tool
-// selection (🟡/🚢/🏁) as the 2D tactical map — click a spot in the 3D view
-// and it raycasts against the water plane (y=0) using the SAME `camera` that
-// follows the boat (scene-environment.js), turning the click into a ROS-frame
-// (x, y) point the exact same way canvasToRos() does for the 2D map (Three.js
-// z = -ROS y, matching every mesh placement in this codebase, e.g. boatGroup/
-// entities-3d.js). Reuses placeMode1EntityAt() so both views share the exact
-// same clamping/spawn/publish logic — clicking either view has identical
-// effect on the actual simulation.
+// Place obstacles/goal directly in the 3D Object Detection camera view, same
+// tool selection (🟡/🚢/🏁) as the 2D tactical map — click a spot in the 3D
+// view and it raycasts against the water plane (y=0) using the SAME `camera`
+// that follows the boat (scene-environment.js), turning the click into a
+// ROS-frame (x, y) point the exact same way canvasToRos() does for the 2D map
+// (Three.js z = -ROS y, matching every mesh placement in this codebase, e.g.
+// boatGroup/entities-3d.js). Reuses placeMode1EntityAt() so all placement
+// surfaces share the exact same clamping/spawn/publish logic — clicking any
+// of them has identical effect on the actual simulation.
+//
+// Bound to detectionOverlayCanvas rather than renderer.domElement: the plain
+// "3D Realistic FPV" panel is no longer shown on its own (its canvas now
+// renders off-screen purely as the detection panel's pixel source — see
+// index.html/style.css), so it can no longer receive clicks; the detection
+// view is the only visible 3D surface left.
 const raycaster = new THREE.Raycaster();
 const raycastMouse = new THREE.Vector2();
 const waterPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-renderer.domElement.addEventListener('click', (e) => {
+detectionOverlayCanvas.addEventListener('click', (e) => {
     if (activeAppMode !== 1 || !currentMode) return;
 
-    const rect = renderer.domElement.getBoundingClientRect();
+    const rect = detectionOverlayCanvas.getBoundingClientRect();
     raycastMouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
     raycastMouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
 
