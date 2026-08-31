@@ -26,6 +26,7 @@
         </header>
 
         <div id="game-container">
+            <div id="main-row">
             <div id="toolbar">
                 <div id="mode1-tools">
                     <h3>1. Design Level (80m x 60m Area)</h3>
@@ -78,27 +79,6 @@
 
                     <button id="btn-reset-dock" class="action-btn red" style="margin-top: 1rem;">🛑 STOP & CANCEL DOCKING</button>
                 </div>
-
-                <div class="telemetry">
-                    <h4>ASV Telemetry</h4>
-                    <p>Status: <span id="tele-status" style="color: #ffc107;">Design Phase</span></p>
-                    <p>X: <span id="tele-x">0.00</span> m</p>
-                    <p>Y: <span id="tele-y">0.00</span> m</p>
-                    <p>Speed: <span id="tele-speed">0.00</span> m/s</p>
-                    <p style="font-size: 0.8rem; color: #a0c4ff;" title="Solved from the boat's real measured speed via its own drag model (thrust = xU*v + xUU*v^2), not the commanded target — reflects what the real thrusters are actually doing. Current/power are a linear estimate from the T200@16V datasheet's full-throttle current draw, so treat them as ballpark, not exact; not accurate enough to also derive an efficiency/battery-waste figure from, so that's intentionally left off.">Thrust: <span id="tele-thrust-pct">0</span>% (<span id="tele-thrust-n">0.0</span>N) · ~<span id="tele-thrust-a">0.0</span>A · ~<span id="tele-thrust-w">0</span>W</p>
-                </div>
-
-                <div class="telemetry" id="dof-panel" style="display: none;">
-                    <h4>Degrees of Freedom (real /odom)</h4>
-                    <div class="dof-row">
-                        <span class="dof-label">Surge (fwd/rev) <span id="dof-surge-val">0.00</span> m/s</span>
-                        <canvas id="dof-surge-chart" width="220" height="36"></canvas>
-                    </div>
-                    <div class="dof-row">
-                        <span class="dof-label">Yaw Rate <span id="dof-yawrate-val">0.00</span> rad/s</span>
-                        <canvas id="dof-yawrate-chart" width="220" height="36"></canvas>
-                    </div>
-                </div>
             </div>
 
             <div id="viewport-container">
@@ -120,6 +100,55 @@
                 <div class="view-panel">
                     <div class="panel-header">Object Detection Camera (Boat Camera)</div>
                     <canvas id="detectionOverlayCanvas" width="550" height="500"></canvas>
+
+                    <!-- Live HUD overlay: the "alive, right-now" stats (status/speed/
+                         thrust) sit on the boat's own camera feed instead of a quiet
+                         footer, like a real ASV heads-up display. pointer-events:none
+                         (see style.css) so it never steals the clicks this canvas
+                         already handles (Mode 1 placement, Mode 3 berth hover/pick). -->
+                    <div id="camera-hud">
+                        <div class="hud-status" id="tele-status" style="color: #ffc107;">Design Phase</div>
+                        <div class="hud-row">
+                            <span class="hud-label">Speed</span>
+                            <span class="hud-value"><span id="tele-speed">0.00</span> m/s</span>
+                        </div>
+                        <div class="hud-row" title="Solved from the boat's real measured speed via its own drag model (thrust = xU*v + xUU*v^2), not the commanded target — reflects what the real thrusters are actually doing. Current/power are a linear estimate from the T200@16V datasheet's full-throttle current draw, so treat them as ballpark, not exact; not accurate enough to also derive an efficiency/battery-waste figure from, so that's intentionally left off.">
+                            <span class="hud-label">Thrust</span>
+                            <span class="hud-value"><span id="tele-thrust-pct">0</span>%</span>
+                            <span class="hud-sub">(<span id="tele-thrust-n">0.0</span>N) · ~<span id="tele-thrust-a">0.0</span>A · ~<span id="tele-thrust-w">0</span>W</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            </div>
+
+            <!-- Telemetry + DOF moved out of the 250px sidebar and into a
+                 full-width bar below the canvases: on Mode 2/3 the sidebar's
+                 instructions already fill most of its height, so stacking
+                 these tall panels underneath them pushed telemetry/DOF below
+                 the fold. Status/Speed/Thrust now live on the camera HUD above;
+                 this bar keeps the boat's position always visible plus a bigger,
+                 bolder DOF dashboard so the real-time motion data reads as the
+                 headline info it actually is. -->
+            <div id="status-bar">
+                <div class="telemetry" id="position-panel">
+                    <h4>Position</h4>
+                    <p>X: <span id="tele-x">0.00</span> m</p>
+                    <p>Y: <span id="tele-y">0.00</span> m</p>
+                </div>
+
+                <div class="telemetry dof-dashboard" id="dof-panel" style="display: none;">
+                    <h4>Degrees of Freedom (real /odom)</h4>
+                    <div class="dof-grid">
+                        <div class="dof-row">
+                            <span class="dof-label">Surge (fwd/rev) <span id="dof-surge-val">0.00</span> m/s</span>
+                            <canvas id="dof-surge-chart" width="400" height="70"></canvas>
+                        </div>
+                        <div class="dof-row">
+                            <span class="dof-label">Yaw Rate <span id="dof-yawrate-val">0.00</span> rad/s</span>
+                            <canvas id="dof-yawrate-chart" width="400" height="70"></canvas>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>

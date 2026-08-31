@@ -58,7 +58,13 @@ header h1 {
 
 #game-container {
     display: flex;
+    flex-direction: column;
     padding: 1rem;
+    gap: 1rem;
+}
+
+#main-row {
+    display: flex;
     gap: 1rem;
 }
 
@@ -102,6 +108,7 @@ button.active { background-color: var(--primary); }
 }
 
 .view-panel {
+    position: relative; /* anchors #camera-hud's absolute positioning */
     flex: 1;
     background-color: var(--panel-bg);
     border-radius: 12px;
@@ -110,6 +117,57 @@ button.active { background-color: var(--primary); }
     display: flex;
     flex-direction: column;
     align-items: center;
+}
+
+/* Live HUD overlaid on the boat camera feed — see the comment above
+   #camera-hud in index.html for why status/speed/thrust live here now
+   instead of a footer panel. */
+#camera-hud {
+    position: absolute;
+    left: 1.4rem;
+    bottom: 1.4rem;
+    max-width: calc(100% - 2.8rem);
+    background: rgba(8, 10, 18, 0.72);
+    backdrop-filter: blur(2px);
+    border: 1px solid rgba(0, 255, 204, 0.5);
+    box-shadow: 0 0 16px rgba(0, 255, 204, 0.15);
+    border-radius: 8px;
+    padding: 0.6rem 0.9rem;
+    font-family: monospace;
+    pointer-events: none; /* let clicks through to the canvas beneath */
+}
+
+.hud-status {
+    font-size: 1.05rem;
+    font-weight: bold;
+    margin-bottom: 0.4rem;
+    text-shadow: 0 0 8px currentColor;
+}
+
+.hud-row {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+    margin-top: 0.15rem;
+}
+
+.hud-label {
+    color: #a0c4ff;
+    text-transform: uppercase;
+    font-size: 0.7rem;
+    letter-spacing: 0.05em;
+}
+
+.hud-value {
+    color: #00ffcc;
+    font-weight: bold;
+    font-size: 1rem;
+}
+
+.hud-sub {
+    color: #8892a6;
+    font-size: 0.75rem;
 }
 
 .panel-header {
@@ -171,9 +229,18 @@ canvas {
     background-color: var(--danger);
 }
 
+/* Full-width bar beneath the canvases holding both telemetry panels — see
+   the comment above #status-bar in index.html for why these moved out of
+   the sidebar. */
+#status-bar {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
 .telemetry {
     background: #101018;
-    padding: 0.8rem;
+    padding: 0.8rem 1rem;
     border-radius: 8px;
     font-family: monospace;
     border: 1px solid #222230;
@@ -182,12 +249,44 @@ canvas {
 .telemetry h4 { margin-top: 0; color: #aaa; margin-bottom: 0.5rem; }
 .telemetry p { margin: 0.3rem 0; font-size: 0.95rem; }
 
-.dof-row { margin: 0.6rem 0; }
-.dof-label { display: block; font-size: 0.85rem; color: #ccc; margin-bottom: 3px; }
-.dof-label span { color: #00ffcc; font-weight: bold; }
+/* Position is now the minor, secondary readout (status/speed/thrust moved
+   to the camera HUD) — a narrow fixed-width strip rather than stretching
+   to fill the row. */
+#position-panel {
+    flex: 0 0 auto;
+    width: 160px;
+}
+
+/* The DOF dashboard is the headline info down here now: bigger charts,
+   bigger numbers, a glowing accent border so it reads as the important
+   readout it is instead of a quiet footer. */
+.dof-dashboard {
+    flex: 1;
+    min-width: 480px;
+    border: 1px solid rgba(0, 255, 204, 0.4);
+    box-shadow: 0 0 14px rgba(0, 255, 204, 0.08);
+}
+.dof-dashboard h4 {
+    color: #00ffcc;
+    font-size: 1.05rem;
+    margin-bottom: 0.8rem;
+}
+
+.dof-grid {
+    display: flex;
+    gap: 2rem;
+    flex-wrap: wrap;
+}
+.dof-grid .dof-row {
+    flex: 1;
+    min-width: 260px;
+    margin: 0;
+}
+.dof-label { display: block; font-size: 0.95rem; color: #ccc; margin-bottom: 6px; }
+.dof-label span { color: #00ffcc; font-weight: bold; font-size: 1.15rem; }
 .dof-row canvas {
     width: 100%;
-    height: 36px;
+    height: 70px;
     background: #0a0a12;
     border: 1px solid #222230;
     border-radius: 4px;
