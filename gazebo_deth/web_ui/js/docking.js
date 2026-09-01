@@ -117,8 +117,16 @@ function isBerthOccupied(berth) {
 
 // Is this berth blocked by a Mode-1-placed static/dynamic obstacle? Shared
 // the same way as isBerthOccupied() above.
+// Excludes isParkedShip entities (the permanent marina fleet) — those are
+// already handled, more precisely, by isBerthOccupied() above (a tighter
+// 4.0m radius, scoped to the berth's own jetty slot). Without this
+// exclusion, a boat legitimately moored in a NEIGHBORING slot (jetty boats
+// are packed only ~2.6m apart) fell within this 5.5m radius too and marked
+// an actually-open berth "Blocked" — real Mode-1-placed obstacles (buoys,
+// patrol boats) never carry isParkedShip, so this only narrows the check to
+// what the name/comment always said it was for.
 function isBerthBlocked(berth) {
-    return entities.some(ent => (ent.type === 'static' || ent.type === 'dynamic') &&
+    return entities.some(ent => (ent.type === 'static' || ent.type === 'dynamic') && !ent.isParkedShip &&
         Math.hypot(ent.ros_x - berth.ros_x, ent.ros_y - berth.ros_y) < 5.5);
 }
 
@@ -234,17 +242,17 @@ function startDynamicDocking(chosen) {
         alignY = chosen.ros_y;
     }
 
-    const transit = findOptimalPath(
+    // buildDockingApproachWaypoints() (pathfinding.js) validates the final
+    // align->creep hop and A*-routes the whole approach instead if that
+    // straight line would actually cross solid structure (e.g. a
+    // neighboring jetty) — see its own comment for why.
+    const dockWaypoints = buildDockingApproachWaypoints(
         { x: boatPos.x, y: boatPos.y },
-        { x: alignX, y: alignY },
+        alignX, alignY,
+        { x: chosen.ros_x, y: chosen.ros_y },
+        chosen.parkedYaw,
         entities
     );
-
-    const dockWaypoints = [
-        ...transit.map(p => ({ x: p.x, y: p.y, mode: 'transit' })),
-        { x: alignX, y: alignY, mode: 'align', targetYaw: chosen.parkedYaw },
-        { x: chosen.ros_x, y: chosen.ros_y, mode: 'creep' }
-    ];
 
     plannedPath = dockWaypoints;
     pathIndex = 1;

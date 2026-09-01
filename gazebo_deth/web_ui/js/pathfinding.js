@@ -288,3 +288,36 @@ function findOptimalPath(start, goal, obstacles) {
 
     return smoothPath;
 }
+
+// Builds the final "approach the berth" tail of a Mode 3 docking plan —
+// shared by docking.js's initial kickoff and navigation.js's live replan so
+// the two can never disagree. The hand-tuned align->creep hop (a single,
+// otherwise unchecked straight line from the align pivot point into the
+// berth) is deliberately positioned clear of the wall the boat is actually
+// docking AT, but nothing validated it against a DIFFERENT nearby obstacle
+// sitting across that line — most commonly a neighboring jetty, when the
+// align point ends up roughly the same x/y as the target (e.g. a bow-in
+// spine-pier dock aligns due north of the berth, then creeps straight south
+// through whatever's on that line). That let the boat's PLANNED route visibly
+// cut through solid dock structure, even though real hull collision then
+// correctly refused to actually drive through it — a planning bug, not a
+// collision one. Falls back to a full A*-route from startPos straight to the
+// creep target (skipping the align pivot state for this one run, still
+// ending on the same high-precision 'creep' leg for the final insertion)
+// only when the straight line is actually unsafe; the common, already-clear
+// case keeps the original hand-tuned align+creep precision maneuver as-is.
+function buildDockingApproachWaypoints(startPos, alignX, alignY, creepTarget, parkedYaw, obstacles) {
+    if (!isSegmentBlocked({ x: alignX, y: alignY }, creepTarget, obstacles)) {
+        const transit = findOptimalPath(startPos, { x: alignX, y: alignY }, obstacles);
+        return [
+            ...transit.map(p => ({ x: p.x, y: p.y, mode: 'transit' })),
+            { x: alignX, y: alignY, mode: 'align', targetYaw: parkedYaw },
+            { x: creepTarget.x, y: creepTarget.y, mode: 'creep' }
+        ];
+    }
+    const fullRoute = findOptimalPath(startPos, creepTarget, obstacles);
+    return [
+        ...fullRoute.slice(0, -1).map(p => ({ x: p.x, y: p.y, mode: 'transit' })),
+        { x: creepTarget.x, y: creepTarget.y, mode: 'creep' }
+    ];
+}

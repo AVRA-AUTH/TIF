@@ -90,6 +90,14 @@ const DOCK_MAX_SPEED = 1.03;
 // meaningfully away from whatever it was touching before trying again.
 const RECOVERY_DURATION_MS = 3000;
 const RECOVERY_REVERSE_SPEED = -0.9;
+// Follow-on "creep forward on the new heading" phase, once the turn phase
+// reports aligned and clear — real separation from whatever the boat was
+// stuck on before handing back to the live replan (see
+// navigation.js's driveRecoveryForward()), rather than resuming
+// plan-following the instant it was JUST barely clear, right next to
+// whatever it turned away from.
+const RECOVERY_FORWARD_DURATION_MS = 2000;
+const RECOVERY_FORWARD_SPEED = 1.2;
 // How long a stuck-spot breadcrumb (state.js's recoveryBreadcrumbs) keeps
 // forcing the live replan to route around it — long enough to survive many
 // replan cycles (250ms each) so the boat doesn't just drift back the moment
@@ -97,6 +105,21 @@ const RECOVERY_REVERSE_SPEED = -0.9;
 // blocked (e.g. a dynamic boat that has since moved on) isn't avoided
 // forever.
 const RECOVERY_BREADCRUMB_DURATION_MS = 25000;
+
+// Angular ramp rate for ordinary autonomous transit steering (navigation.js),
+// used instead of THRUST_RAMP_RATE (6.0 — reaches MAX_ANGULAR in ~0.2s,
+// tuned for Mode 2's snappy manual joystick feel). Reusing that same fast
+// ramp for autonomous steering meant every 250ms live replan that picked a
+// meaningfully different heading turned into a near-instant hard turn — read
+// as a sudden, "dramatic" swing rather than a smooth arc into the new
+// heading. 1.5 reaches MAX_ANGULAR in ~0.8s instead — still responsive
+// enough to react to a fresh obstacle, just eased into rather than snapped
+// into. Deliberately NOT used for align/approach/creep/reverse_swing (those
+// keep the fast THRUST_RAMP_RATE) or the stuck-recovery maneuver — both are
+// low-frequency, hand-tuned, or urgent state transitions that want to commit
+// decisively, not the routine "replan tweaks the transit heading a bit"
+// case this exists for.
+const AUTONOMOUS_ANGULAR_RAMP_RATE = 1.5;
 
 // Mode 3's "logical place for docking": the open-water fairway mouth just
 // outside the marina's dock structure that every docking run funnels

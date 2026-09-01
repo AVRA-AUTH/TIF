@@ -12,29 +12,68 @@
 // roll-bank effect below).
 
 // Stuck-recovery maneuver — see runNavigationStep()'s entry into
-// recoveryUntil/recoveryYaw (state.js) below for why this exists as a
-// committed, multi-second maneuver rather than a single-frame reactive
-// nudge: a one-frame nudge (kill/cap speed for one tick, re-evaluate next
-// tick) let the normal plan-following logic steer straight back into
-// contact the instant it briefly cleared, producing a tight "twitch and
-// reapproach" loop rather than real escape distance. This runs instead of
-// the whole normal movement block for RECOVERY_DURATION_MS (config.js):
-// turn decisively toward the escape heading picked once at entry
-// (boundaries.js's findRecoveryYaw(), hull-aware — not just a point check),
-// while reversing at a firm, real speed — unless reversing is ALSO driving
-// into something, in which case it just pivots toward the escape heading in
-// place rather than backing into a second obstacle.
+// recoveryUntil/recoveryYaw (state.js) below. Turn-first, not
+// reverse-first: pivot decisively toward the escape heading picked once at
+// entry (boundaries.js's findRecoveryYaw(), hull-aware — not just a point
+// check), same "stop and pivot in place" idea the docking align state
+// already uses, and only ease in a little reverse if the hull is STILL
+// touching something even while turning (genuinely wedged nose-first, not
+// just needing to reorient) — enough to create clearance to complete the
+// turn, not a committed multi-second back-out by default. The caller exits
+// this maneuver the moment the boat is aligned and no longer blocked going
+// forward (checked every frame before this even runs), so a plain "turn the
+// other way, then carry on forward" case never reverses at all; ended a
+// mistake doesn't need an elaborate undo, just a correction.
+// RECOVERY_DURATION_MS is a safety ceiling only, for the rare case it can't
+// fully clear — not the normal, always-used duration.
 function driveRecovery(navDt) {
     const yd = recoveryYaw - boatPos.yaw;
     const yawDiff = Math.atan2(Math.sin(yd), Math.cos(yd));
     const targetAngular = Math.sign(yawDiff) * Math.min(MAX_ANGULAR, Math.abs(yawDiff) * 3.0);
     currentAngular = approachVelocity(currentAngular, targetAngular, navDt);
 
+    const stillTouching = isTouchingObstacle();
     const reverseBlocked = isMovingIntoObstacle(-1, false) || isExitingLake(-1);
-    const targetLinear = reverseBlocked ? 0.0 : RECOVERY_REVERSE_SPEED;
+    const targetLinear = (stillTouching && !reverseBlocked) ? RECOVERY_REVERSE_SPEED : 0.0;
     currentLinear = approachVelocity(currentLinear, targetLinear, navDt);
     currentLinear = Math.max(MAX_LINEAR_REV, Math.min(MAX_LINEAR_FWD, currentLinear));
 
+    publishRecoveryFrame('↩️ Recovering — backing clear of obstruction...');
+}
+
+// Follow-on phase once driveRecovery() reports aligned and clear: creep
+// forward on the new heading for a bit (RECOVERY_FORWARD_DURATION_MS,
+// config.js) before handing back to the live replan — real separation from
+// whatever the boat just turned away from, instead of resuming
+// plan-following the instant it was JUST barely clear and still right next
+// to it (which risked the very next replan routing straight back toward the
+// same spot). Aborts straight back into a fresh driveRecovery() turn if the
+// creep itself finds something new, rather than pushing into it.
+function driveRecoveryForward(navDt) {
+    const yd = recoveryYaw - boatPos.yaw;
+    const yawDiff = Math.atan2(Math.sin(yd), Math.cos(yd));
+    const targetAngular = Math.sign(yawDiff) * Math.min(MAX_ANGULAR, Math.abs(yawDiff) * 1.5);
+    currentAngular = approachVelocity(currentAngular, targetAngular, navDt, AUTONOMOUS_ANGULAR_RAMP_RATE);
+
+    if (isMovingIntoObstacle(1, false) || isExitingLake(1)) {
+        recoveryForwardUntil = 0;
+        recoveryYaw = findRecoveryYaw(boatPos.x, boatPos.y, boatPos.yaw) ??
+            localCorrectedYaw(boatPos.x, boatPos.y, currentLinear, boatPos.yaw, entities, false);
+        recoveryUntil = Date.now() + RECOVERY_DURATION_MS;
+        driveRecovery(navDt);
+        return;
+    }
+
+    currentLinear = approachVelocity(currentLinear, RECOVERY_FORWARD_SPEED, navDt);
+    currentLinear = Math.max(MAX_LINEAR_REV, Math.min(MAX_LINEAR_FWD, currentLinear));
+
+    publishRecoveryFrame('↩️ Recovering — creeping clear...');
+}
+
+// Shared publish + telemetry tail for driveRecovery()/driveRecoveryForward()
+// — both drive currentLinear/currentAngular themselves and just need this
+// same boilerplate to actually reach ROS and the HUD each frame.
+function publishRecoveryFrame(statusText) {
     if (boatGroup) boatGroup.rotation.z = -currentAngular * 0.15;
     cmdVelTopic.publish(new ROSLIB.Message({
         linear: { x: currentLinear, y: 0.0, z: 0.0 },
@@ -43,7 +82,7 @@ function driveRecovery(navDt) {
 
     const statusEl = document.getElementById('tele-status');
     if (statusEl) {
-        statusEl.textContent = '↩️ Recovering — backing clear of obstruction...';
+        statusEl.textContent = statusText;
         statusEl.style.color = '#ff8800';
     }
     document.getElementById('tele-x').textContent = boatPos.x.toFixed(2);
@@ -137,7 +176,30 @@ function runNavigationStep(navDt) {
         // boat is actively backing away from would just recompute a route
         // back toward the same spot it's trying to clear).
         if (isNavigating && now < recoveryUntil) {
-            driveRecovery(navDt);
+            // End the maneuver the moment it's actually done its job —
+            // turned toward daylight and no longer blocked going forward —
+            // instead of always riding out the full RECOVERY_DURATION_MS
+            // ceiling. A plain "wrong heading, needs to turn" case clears
+            // this almost immediately and falls straight through to normal
+            // forward progress this same frame; only a genuinely stubborn
+            // wedge keeps driveRecovery() running past a frame or two.
+            const yd = recoveryYaw - boatPos.yaw;
+            const headingError = Math.atan2(Math.sin(yd), Math.cos(yd));
+            const turnedAndClear = Math.abs(headingError) < 0.15 && !isMovingIntoObstacle(1, false);
+            if (turnedAndClear) {
+                // Turn phase done — hand straight to the forward-creep phase
+                // below THIS SAME frame (not next frame) for real separation
+                // before trusting the live replan's route again.
+                recoveryUntil = 0;
+                recoveryForwardUntil = now + RECOVERY_FORWARD_DURATION_MS;
+            } else {
+                driveRecovery(navDt);
+                return;
+            }
+        }
+
+        if (isNavigating && now < recoveryForwardUntil) {
+            driveRecoveryForward(navDt);
             return;
         }
 
@@ -196,18 +258,22 @@ function runNavigationStep(navDt) {
                 return dist <= 25.0;
             }).concat(activeRecoveryBreadcrumbObstacles(now));
 
-            const newTransit = findOptimalPath(
+            // buildDockingApproachWaypoints() (pathfinding.js) validates the
+            // final align->creep hop and A*-routes the whole approach
+            // instead if that straight line would actually cross solid
+            // structure — same as startDynamicDocking()'s initial kickoff,
+            // kept in sync since a live replan reconstructs this same tail
+            // every 250ms.
+            const chosen = dockingTarget.chosen;
+            const newDockWaypoints = buildDockingApproachWaypoints(
                 { x: boatPos.x, y: boatPos.y },
-                { x: dockingTarget.alignX, y: dockingTarget.alignY },
+                dockingTarget.alignX, dockingTarget.alignY,
+                { x: chosen.ros_x, y: chosen.ros_y },
+                chosen.parkedYaw,
                 sensedObstacles
             );
-            if (newTransit && newTransit.length > 1) {
-                const chosen = dockingTarget.chosen;
-                plannedPath = [
-                    ...newTransit.map(p => ({ x: p.x, y: p.y, mode: 'transit' })),
-                    { x: dockingTarget.alignX, y: dockingTarget.alignY, mode: 'align', targetYaw: chosen.parkedYaw },
-                    { x: chosen.ros_x, y: chosen.ros_y, mode: 'creep' }
-                ];
+            if (newDockWaypoints && newDockWaypoints.length > 1) {
+                plannedPath = newDockWaypoints;
                 pathIndex = 1;
                 ilosState.k = 1; // same reasoning as Mode 1's replan above — y_int survives
                 update3DPathLine();
@@ -546,7 +612,19 @@ function runNavigationStep(navDt) {
 
                 // --- Angular: proportional heading control, capped at MAX_ANGULAR ---
                 const targetAngular = Math.sign(yawDiff) * Math.min(MAX_ANGULAR, Math.abs(yawDiff) * angularGain);
-                currentAngular = approachVelocity(currentAngular, targetAngular, navDt);
+                // Ordinary transit (mode 'transit' or unset — the A*-planned
+                // lead-in, whether Mode 1's own path or docking's transit
+                // prefix) eases into a new heading (AUTONOMOUS_ANGULAR_RAMP_RATE,
+                // config.js) instead of snapping to it — this is the leg a
+                // 250ms live replan keeps nudging, so it's what read as
+                // "dramatic." The hand-tuned docking maneuvers
+                // (align/approach/creep/reverse_swing) keep the fast,
+                // decisive THRUST_RAMP_RATE default — those are deliberate
+                // state transitions, not routine replan noise.
+                const isTransitLeg = target.mode === 'transit' || target.mode === undefined;
+                currentAngular = isTransitLeg
+                    ? approachVelocity(currentAngular, targetAngular, navDt, AUTONOMOUS_ANGULAR_RAMP_RATE)
+                    : approachVelocity(currentAngular, targetAngular, navDt);
 
                 // boatPos itself is NOT integrated here — it comes solely
                 // from the /odom subscription (same as Mode 2), so what's

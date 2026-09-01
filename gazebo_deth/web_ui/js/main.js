@@ -31,6 +31,17 @@ function draw() {
     // Active Navigation Kinematic & ROS Steer Loop (Receding Horizon Live Pathfinder)
     if (isNavigating && plannedPath.length > 0) {
         runNavigationStep(navDt);
+        // update3DPathLine() itself is only otherwise called at replan events
+        // (a fresh A* route, docking kickoff, Reset) — its arrow's start
+        // point is the boat position AT THAT CALL, frozen until the next one.
+        // Between replans (up to 250ms, and align/creep don't replan at all)
+        // the boat keeps moving every frame while that arrow doesn't, so it
+        // visibly lagged behind — up to pointing back at the boat from
+        // BEHIND it once the boat drove past its stale anchor, reading as a
+        // sudden, dramatic direction change. Refreshing it every frame here
+        // keeps its start point (and therefore its whole look) current with
+        // wherever the boat actually is right now.
+        update3DPathLine();
     }
 
     renderPlannedPathLine();

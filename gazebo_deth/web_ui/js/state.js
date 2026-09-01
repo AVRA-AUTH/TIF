@@ -59,6 +59,12 @@ let dockingBerthName = '';
 // instead of being recomputed — and potentially flip-flopping — every frame.
 let recoveryUntil = 0;
 let recoveryYaw = 0;
+// Follow-on "creep forward on the new heading" phase (navigation.js's
+// driveRecoveryForward()) once the turn phase above reports aligned and
+// clear — gets real separation from whatever the boat was stuck on before
+// handing back to the live replan, instead of doing so the instant it was
+// JUST barely clear.
+let recoveryForwardUntil = 0;
 // Breadcrumbs of recent stuck spots ({x, y, until}) — see navigation.js's
 // activeRecoveryBreadcrumbObstacles(). Backing off on its own doesn't help
 // when the live replan's target sits behind the same choke point: without
