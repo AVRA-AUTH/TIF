@@ -84,6 +84,16 @@ function placeMode1EntityAt(rx, ry) {
         currentGoal = { type: 'goal', ros_x: rx, ros_y: ry, id: 'goal_node' };
         entities.push(currentGoal);
     } else {
+        // Reject a spawn point that would already be touching the boat's
+        // own hull at its current (stationary, design-phase) pose — see
+        // wouldObstaclePlacementCollideWithBoat() for why this matters now
+        // that hull-touch detection is hull-box-aware instead of a flat
+        // center-to-center radius.
+        if (wouldObstaclePlacementCollideWithBoat(rx, ry, currentMode)) {
+            alert('⚠️ Too close to your boat — pick a spot further away.');
+            return;
+        }
+
         const obsId = `obs_${obsCounter++}`;
         const ent = {
             type: currentMode,

@@ -24,41 +24,14 @@ function selectBerth(idx) {
     });
 }
 
-// Silent version for hover preview - same berth-search logic, no alert()s,
-// no occupied/obstacle side-effects, just "is there a valid spot here?"
-function probeBerthCandidate(rx, ry, isParallel) {
-    let bestBerth = null;
-    let minDist = 3.5;
-
-    if (rx >= MARINA_PIER_X_MIN && rx <= MARINA_PIER_X_MAX) {
-        if (Math.abs(ry - (-175.0 * WORLD_SCALE)) < minDist) {
-            minDist = Math.abs(ry - (-175.0 * WORLD_SCALE));
-            bestBerth = { ros_x: rx, ros_y: isParallel ? -171.2 * WORLD_SCALE : -168.8 * WORLD_SCALE };
-        }
-    }
-    JETTY_X_LIST.forEach((jx) => {
-        if (ry <= JETTY_Y_NEAR && ry >= JETTY_Y_FAR) {
-            if (Math.abs(rx - (jx - 2.0)) < minDist) {
-                minDist = Math.abs(rx - (jx - 2.0));
-                bestBerth = { ros_x: isParallel ? jx - 3.6 : jx - 5.5, ros_y: ry };
-            }
-            if (Math.abs(rx - (jx + 2.0)) < minDist) {
-                minDist = Math.abs(rx - (jx + 2.0));
-                bestBerth = { ros_x: isParallel ? jx + 3.6 : jx + 5.5, ros_y: ry };
-            }
-        }
-    });
-    return bestBerth;
-}
-
-// Mode 3 berth detection — given a map click already converted to ROS
-// coordinates (rx, ry) and the user's parking-style choice, finds the
-// nearest pier/jetty face within snap distance, validates it's not already
-// occupied or blocked, and returns the berth descriptor (or null if the
-// click/spot was invalid — matches the original inline click-handler
-// behavior exactly, including showing the same alert() messages here rather
-// than at the call site, so behavior is identical either way).
-function detectBerthAtClick(rx, ry, isParallel) {
+// Shared nearest-pier/jetty-face search, used by both the real click handler
+// and the hover-preview probe below so the two can never disagree about
+// where a berth candidate actually is. Given a map click/hover point already
+// converted to ROS coordinates (rx, ry) and the user's parking-style choice,
+// finds the nearest pier/jetty face within snap distance and returns the
+// full berth descriptor (or null if nothing is within snap distance) — no
+// occupied/obstacle validation here, see isBerthOccupied()/isBerthBlocked().
+function findBerthDescriptor(rx, ry, isParallel) {
     let bestBerth = null;
     let minDist = 3.5; // 3.5m snap distance
 
@@ -122,29 +95,61 @@ function detectBerthAtClick(rx, ry, isParallel) {
         }
     });
 
+    return bestBerth;
+}
+
+// Does this berth overlap a parked vessel on the finger jetties? Shared by
+// the click handler and the hover probe so both agree on what's occupied.
+function isBerthOccupied(berth) {
+    return berth.ros_y <= -128.0 * WORLD_SCALE && berth.ros_y >= -168.0 * WORLD_SCALE &&
+        Math.abs(berth.ros_y - (-147.5 * WORLD_SCALE)) > 3.5 && berth.name.includes('Jetty');
+}
+
+// Is this berth blocked by a Mode-1-placed static/dynamic obstacle? Shared
+// the same way as isBerthOccupied() above.
+function isBerthBlocked(berth) {
+    return entities.some(ent => (ent.type === 'static' || ent.type === 'dynamic') &&
+        Math.hypot(ent.ros_x - berth.ros_x, ent.ros_y - berth.ros_y) < 5.5);
+}
+
+// Silent version for hover preview — same berth-search + validity logic as
+// detectBerthAtClick() below (via the shared helpers above), no alert()s.
+// Used to be a separate, simpler search with no occupied/obstacle checks at
+// all, so hovering could highlight a spot as "valid" that would immediately
+// reject with an alert() on click (an already-occupied jetty slip, or a spot
+// blocked by a placed obstacle) — now it only ever reports a spot as
+// dockable if a real click there would actually succeed.
+function probeBerthCandidate(rx, ry, isParallel) {
+    const bestBerth = findBerthDescriptor(rx, ry, isParallel);
+    if (!bestBerth) return null;
+    if (isBerthOccupied(bestBerth)) return null;
+    if (isBerthBlocked(bestBerth)) return null;
+    return bestBerth;
+}
+
+// Mode 3 berth detection — given a map click already converted to ROS
+// coordinates (rx, ry) and the user's parking-style choice, finds the
+// nearest pier/jetty face within snap distance, validates it's not already
+// occupied or blocked, and returns the berth descriptor (or null if the
+// click/spot was invalid — matches the original inline click-handler
+// behavior exactly, including showing the same alert() messages here rather
+// than at the call site, so behavior is identical either way).
+function detectBerthAtClick(rx, ry, isParallel) {
+    const bestBerth = findBerthDescriptor(rx, ry, isParallel);
+
     if (!bestBerth) {
         alert("No valid pier edge detected! Please click closer to a rigid wooden dock.");
         return null;
     }
 
     // Check if selected spot overlaps a parked vessel on finger jetties
-    if (bestBerth.ros_y <= -128.0 * WORLD_SCALE && bestBerth.ros_y >= -168.0 * WORLD_SCALE && Math.abs(bestBerth.ros_y - (-147.5 * WORLD_SCALE)) > 3.5) {
-        if (bestBerth.name.includes('Jetty')) {
-            alert("⛔ Space Occupied! A parked vessel is currently docked at this location. Please select an open spot.");
-            return null;
-        }
+    if (isBerthOccupied(bestBerth)) {
+        alert("⛔ Space Occupied! A parked vessel is currently docked at this location. Please select an open spot.");
+        return null;
     }
 
     // 3. Perception / Collision Check for obstacles
-    let blocked = false;
-    entities.forEach(ent => {
-        if (ent.type === 'static' || ent.type === 'dynamic') {
-            const dist = Math.hypot(ent.ros_x - bestBerth.ros_x, ent.ros_y - bestBerth.ros_y);
-            if (dist < 5.5) blocked = true;
-        }
-    });
-
-    if (blocked) {
+    if (isBerthBlocked(bestBerth)) {
         alert("🚫 OBSTACLE DETECTED! There is another vessel parked there. Choose an empty space.");
         return null;
     }

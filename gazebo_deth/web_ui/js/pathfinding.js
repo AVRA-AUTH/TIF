@@ -8,9 +8,27 @@
 // disagree about whether a given spot is water or structure (they used to:
 // one checked this exact rectangular shape, the other blocked a plain circle
 // of a different, unit-mismatched size around the marina's center).
-function isInsideMarinaStructure(x, y) {
-    // Main Spine Pier Wall — canonical geometry (MARINA_PIER_* consts).
-    if (y <= MARINA_PIER_Y && x >= MARINA_PIER_X_MIN && x <= MARINA_PIER_X_MAX) return true;
+function isInsideMarinaStructure(x, y, extraMargin) {
+    extraMargin = extraMargin || 0;
+    // Main Spine Pier Wall — canonical geometry (MARINA_PIER_* consts), padded
+    // by MARINA_PIER_PATH_MARGIN on the exposed north face and both ends (see
+    // config.js for why: this used to be the pier's exact literal footprint,
+    // the only obstacle in the whole pathfinder with zero planning buffer).
+    // Suppressed directly in front of a finger jetty (within its own 5.5m
+    // half-width below): jetties connect right at this same face with no gap
+    // by design, and this marina is a deliberately tight, packed layout — the
+    // pier's extra margin stacked on top of the jetty's own clearance there
+    // closed off the real lane a boat needs to reach a jetty berth entirely,
+    // which is what got a boat stuck immediately in front of a jetty mouth
+    // the first time this margin was added. The jetty's own keepout below is
+    // already generous (5.5m vs. its real 2.0m half-width) and covers this
+    // stretch on its own.
+    const jettyHalfBuffer = 5.5 + extraMargin;
+    const nearAJetty = JETTY_X_LIST.some(jx => Math.abs(x - jx) < jettyHalfBuffer);
+    const pierMargin = (nearAJetty ? 0 : MARINA_PIER_PATH_MARGIN) + extraMargin;
+    if (y <= MARINA_PIER_Y + pierMargin &&
+        x >= MARINA_PIER_X_MIN - pierMargin &&
+        x <= MARINA_PIER_X_MAX + pierMargin) return true;
     // 3 Finger Jetties (2.5m clearance around each jetty centerline, y = -115 to -175)
     // 5.5m half-width, not the jetty's own 2.0m — path planning treats the
     // boat as a point, but isTouchingObstacle()'s real hull-collision check
@@ -21,21 +39,42 @@ function isInsideMarinaStructure(x, y) {
     // the plan itself was "clear" — this matches SAFETY_RADIUS (used for
     // every other obstacle) instead of understating it.
     for (const jx of JETTY_X_LIST) {
-        if (Math.abs(x - jx) < 5.5 && y <= JETTY_Y_NEAR && y >= JETTY_Y_FAR) return true;
+        if (Math.abs(x - jx) < jettyHalfBuffer && y <= JETTY_Y_NEAR && y >= JETTY_Y_FAR) return true;
     }
     return false;
 }
 
 // Single obstacle predicate for the whole pathfinder: outside the navigable
-// lake (shoreline/greenery), the island, the marina structure, or within
-// SAFETY_RADIUS of any live obstacle (buoys, moving boats, and the ~30
+// lake (shoreline/greenery), the island, the marina structure, or within a
+// keepout radius of any live obstacle (buoys, moving boats, and the ~30
 // baked-in moored boats, all passed in via `obstacles`).
-function isPointBlocked(x, y, obstacles) {
-    if (Math.hypot(x, y) > LAKE_RADIUS - SHORE_MARGIN) return true;
-    if (Math.hypot(x - ISLAND_X, y - ISLAND_Y) < ISLAND_KEEP_OUT) return true;
-    if (isInsideMarinaStructure(x, y)) return true;
+//
+// The ~30 baked-in moored boats (entities with isParkedShip, see
+// scene-marina.js's createMooredBoat) get their OWN smaller
+// MOORED_SHIP_SAFETY_RADIUS instead of the generic SAFETY_RADIUS every other
+// obstacle uses — SAFETY_RADIUS (5.5m) is sized for a buoy/boat the player
+// can drop anywhere in open water, but these are only ~2.4m off their
+// jetty's own centerline by design (packed marina, ~2.6m same-jetty
+// spacing). Stacking the full 5.5m on top of the jetty's own 5.5m keepout
+// pinched the open lane between two adjacent jetties down to ~4m — thinner
+// than the 4m pathfinder grid cell, which could fail to route through it at
+// all — which is what read as the boat getting stuck right at a jetty mouth
+// with moored boats on either side. MOORED_SHIP_SAFETY_RADIUS keeps a real
+// margin over their actual ~2.0m hull-contact radius (boundaries.js) without
+// adding to what the jetty's own keepout already covers.
+// extraMargin: optional additional standoff on top of every keepout below —
+// see findOptimalPath()'s SHORTCUT_MARGIN for why this exists (the
+// string-pulling smoothing pass uses it to prefer a route with real
+// breathing room around a corner instead of the tightest legally-clear
+// shortcut; every other caller passes 0/omits it, unchanged).
+function isPointBlocked(x, y, obstacles, extraMargin) {
+    extraMargin = extraMargin || 0;
+    if (Math.hypot(x, y) > LAKE_RADIUS - SHORE_MARGIN - extraMargin) return true;
+    if (Math.hypot(x - ISLAND_X, y - ISLAND_Y) < ISLAND_KEEP_OUT + extraMargin) return true;
+    if (isInsideMarinaStructure(x, y, extraMargin)) return true;
     for (const obs of obstacles) {
-        if (Math.hypot(x - obs.ros_x, y - obs.ros_y) < SAFETY_RADIUS) return true;
+        const radius = (obs.isParkedShip ? MOORED_SHIP_SAFETY_RADIUS : SAFETY_RADIUS) + extraMargin;
+        if (Math.hypot(x - obs.ros_x, y - obs.ros_y) < radius) return true;
     }
     return false;
 }
@@ -43,15 +82,15 @@ function isPointBlocked(x, y, obstacles) {
 // Segment-blocked check, sampled at sub-grid resolution against the SAME
 // predicate the grid search uses — this is what keeps the "is a straight
 // line clear?" fast path and the A* grid in agreement.
-function isSegmentBlocked(p1, p2, obstacles) {
+function isSegmentBlocked(p1, p2, obstacles, extraMargin) {
     const dx = p2.x - p1.x;
     const dy = p2.y - p1.y;
     const len = Math.hypot(dx, dy);
-    if (len === 0) return isPointBlocked(p1.x, p1.y, obstacles);
+    if (len === 0) return isPointBlocked(p1.x, p1.y, obstacles, extraMargin);
     const steps = Math.max(1, Math.ceil(len / 1.0)); // sample every ~1m
     for (let i = 0; i <= steps; i++) {
         const t = i / steps;
-        if (isPointBlocked(p1.x + t * dx, p1.y + t * dy, obstacles)) return true;
+        if (isPointBlocked(p1.x + t * dx, p1.y + t * dy, obstacles, extraMargin)) return true;
     }
     return false;
 }
@@ -92,11 +131,28 @@ class MinHeap {
     }
 }
 
+// Extra standoff (on top of every real keepout — SAFETY_RADIUS,
+// MOORED_SHIP_SAFETY_RADIUS, the marina structure) used ONLY by the
+// direct-line fast path and the string-pulling shortcut pass below, never by
+// the raw A* grid search itself. Without this, string-pulling's greedy
+// "farthest visible point" shortcut takes the single tightest diagonal cut
+// that's still LEGALLY clear — by construction that hugs right along
+// whatever corner/obstacle edge made a shorter cut illegal, so the boat's
+// planned route (and the ILOS tracking it) rode the exact boundary of a
+// keepout zone rather than taking a wider, more open turn around it. The
+// raw grid search underneath is deliberately left untouched (extraMargin=0)
+// so it can still find a way through a real tight-but-legal corridor (e.g. a
+// docking berth) — this only asks the SMOOTHING step to prefer more
+// breathing room when the room is actually there, falling back to following
+// the raw (tight but valid) grid path more closely — never fewer than the
+// original vetted grid segments — when it isn't.
+const SHORTCUT_MARGIN = 3.0;
+
 function findOptimalPath(start, goal, obstacles) {
     const validObs = obstacles.filter(o => o.type !== 'goal');
 
-    // Direct line check first (instant if unblocked)
-    if (!isSegmentBlocked(start, goal, validObs)) {
+    // Direct line check first (instant if unblocked, with real breathing room)
+    if (!isSegmentBlocked(start, goal, validObs, SHORTCUT_MARGIN)) {
         return [{ x: start.x, y: start.y }, { x: goal.x, y: goal.y }];
     }
 
@@ -202,11 +258,28 @@ function findOptimalPath(start, goal, obstacles) {
     const smoothPath = [rawPath[0]];
     let currIdx = 0;
     while (currIdx < rawPath.length - 1) {
+        // Prefer a shortcut with real breathing room (SHORTCUT_MARGIN) first;
+        // only if NONE exists anywhere in the remaining path does this fall
+        // back to the tightest legally-clear one (0 margin) — still strictly
+        // better than jumping straight to the currIdx+1 fallback, which would
+        // needlessly follow the raw grid path turn-by-turn even where a
+        // perfectly safe, less jagged shortcut (just not a wide-open one)
+        // was actually available.
         let farthest = currIdx + 1;
+        let found = false;
         for (let nextIdx = rawPath.length - 1; nextIdx > currIdx + 1; nextIdx--) {
-            if (!isSegmentBlocked(rawPath[currIdx], rawPath[nextIdx], validObs)) {
+            if (!isSegmentBlocked(rawPath[currIdx], rawPath[nextIdx], validObs, SHORTCUT_MARGIN)) {
                 farthest = nextIdx;
+                found = true;
                 break;
+            }
+        }
+        if (!found) {
+            for (let nextIdx = rawPath.length - 1; nextIdx > currIdx + 1; nextIdx--) {
+                if (!isSegmentBlocked(rawPath[currIdx], rawPath[nextIdx], validObs)) {
+                    farthest = nextIdx;
+                    break;
+                }
             }
         }
         smoothPath.push(rawPath[farthest]);

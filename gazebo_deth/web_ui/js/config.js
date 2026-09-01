@@ -79,6 +79,25 @@ const DOCK_BRAKE_DECEL = 0.3 * (MAX_LINEAR_FWD / 6.0); // ~0.1245 m/s^2
 // today; approach/creep/reverse_swing are already well under this.
 const DOCK_MAX_SPEED = 1.03;
 
+// Stuck-recovery maneuver duration (navigation.js's driveRecovery()) — a
+// committed reverse-and-turn held for this long (real seconds, not frames),
+// not a single-frame reactive nudge. A one-frame nudge (kill/cap speed for
+// one tick, re-evaluate the next) wasn't enough real distance to clear a
+// genuine wedge: as soon as hull contact briefly cleared, the normal
+// plan-following logic immediately steered straight back into it — a tight
+// "twitch and reapproach" loop instead of actually getting clear. 3 seconds
+// of committed reverse at ~0.9 m/s covers ~2.7m, enough to back the hull
+// meaningfully away from whatever it was touching before trying again.
+const RECOVERY_DURATION_MS = 3000;
+const RECOVERY_REVERSE_SPEED = -0.9;
+// How long a stuck-spot breadcrumb (state.js's recoveryBreadcrumbs) keeps
+// forcing the live replan to route around it — long enough to survive many
+// replan cycles (250ms each) so the boat doesn't just drift back the moment
+// it expires, short enough that a spot which genuinely was just temporarily
+// blocked (e.g. a dynamic boat that has since moved on) isn't avoided
+// forever.
+const RECOVERY_BREADCRUMB_DURATION_MS = 25000;
+
 // Mode 3's "logical place for docking": the open-water fairway mouth just
 // outside the marina's dock structure that every docking run funnels
 // through before entering a specific berth. Also where Reset parks the
@@ -175,7 +194,31 @@ const jettyCenterY = (JETTY_Y_NEAR + JETTY_Y_FAR) / 2; // ROS y
 
 // Pathfinder keep-out margins — see pathfinding.js's isPointBlocked()/isInsideMarinaStructure().
 const SAFETY_RADIUS = 5.5; // Restrictive imaginary keep-out radius for buoys/boats (meters)
+// Smaller keepout for the ~30 baked-in moored boats specifically (see
+// pathfinding.js's isPointBlocked()) — they sit only ~2.4m off their jetty's
+// own centerline by design (packed marina), so the generic 5.5m SAFETY_RADIUS
+// (sized for a buoy the player can drop anywhere) stacked on top of the
+// jetty's own 5.5m keepout and pinched the lane between two jetties down
+// to ~4m. This stays a real margin over their actual ~2.0m hull-contact
+// radius (boundaries.js) without adding to what the jetty's own keepout
+// already covers.
+const MOORED_SHIP_SAFETY_RADIUS = 2.5;
 const SHORE_MARGIN = 4.0;  // Keep-out band inside LAKE_RADIUS, off-limits to route planning (beach/greenery)
+
+// Extra pathfinder-only clearance added around the spine pier's exposed
+// north face and east/west ends (on top of its real MARINA_PIER_* footprint)
+// — unlike every other obstacle (buoys/boats get SAFETY_RADIUS, the shore
+// gets SHORE_MARGIN), the pier itself had ZERO planning buffer, so a live
+// replan could route the boat right along its face with no standoff at all;
+// real hull-footprint collision then caught up a moment later, which read
+// as "the boat gets stuck against the marina." Kept under 3.7m so it can't
+// swallow the parallel-spine-pier docking align point (only 3.0m off the
+// wall by design, see docking.js's ALIGN_WALL_MARGIN) — that point must stay
+// reachable. The finger jetties already have their own 5.5m half-width
+// buffer (vs. their real 2.0m) and are left as-is; widening that further
+// would break the docking corridors that deliberately funnel close to a
+// jetty mouth.
+const MARINA_PIER_PATH_MARGIN = 3.0;
 
 // ================= ILOS GUIDANCE TUNABLES (see guidance.js) ================= //
 // Starting points, scaled down from the user's own MATLAB ILOS_wrapper
@@ -189,5 +232,11 @@ const ILOS_SIGMA = 0.05;                  // anti-windup term on the integral (d
 const ILOS_R_SWITCH = 2.0 * WORLD_SCALE;  // switch to the next segment once within this of the current one's end (m)
 
 // DWA-style local correction tunables (see guidance.js's localCorrectedYaw()).
-const DWA_HEADING_OFFSETS = [0, -0.2, 0.2, -0.4, 0.4]; // rad, preferred heading tried first
+// Widened from the original [0, -0.2, 0.2, -0.4, 0.4] (max ~23deg either
+// side) — that fan was too narrow to find a way around a real corner (e.g.
+// a jetty/pier corner clipped mid-transit), so once the preferred heading
+// was blocked it just fell back to that SAME blocked heading every frame.
+// Still tried smallest-deviation-first, just with more/wider rungs (up to
+// ~92deg) so a genuine "go around it" heading is actually in the search.
+const DWA_HEADING_OFFSETS = [0, -0.2, 0.2, -0.4, 0.4, -0.7, 0.7, -1.0, 1.0, -1.3, 1.3, -1.6, 1.6]; // rad, preferred heading tried first
 const DWA_LOOKAHEAD_SEC = 1.5;

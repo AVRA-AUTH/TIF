@@ -25,6 +25,8 @@ function resetBoatToPose(pose) {
     currentLinear = 0.0;
     currentAngular = 0.0;
     shipCollisionAlertShown = false;
+    playerBoatCrashed = false;
+    recoveryUntil = 0; // isNavigating=false above already guards driveRecovery, but avoid carrying stale recovery state into the next run regardless
 
     boatPos = { x: pose.x, y: pose.y, yaw: pose.yaw, speed: 0 };
     // Give the backend's async 'set_pose' teleport time to actually land in

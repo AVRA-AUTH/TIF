@@ -89,13 +89,26 @@ function draw() {
     // 3D Boat Group Transform
     if (radarMesh) radarMesh.rotation.y += 0.05; // Spin radar scanner
 
-    boatGroup.position.set(boatPos.x, 0.4, -boatPos.y);
-    boatGroup.rotation.y = boatPos.yaw;
-    // Pre-existing behavior, kept as-is: this unconditionally overwrites the
-    // roll-bank effect runNavigationStep() sets (navigation.js) every frame,
-    // before render — so that roll-bank visually never actually happens.
-    // Not a new bug, not fixed here; see the file-split plan's notes.
-    boatGroup.rotation.z = 0;
+    if (playerBoatCrashed) {
+        // Same tilt/submerge look updateDynamicEntities() (navigation.js)
+        // already gives a crashed patrol boat (rotation.z 0.8, position.y
+        // -0.3), eased in over 1.2s instead of snapped instantly so it
+        // reads as sinking rather than teleporting — the reset confirm()
+        // dialog is deliberately delayed that long so this gets to play.
+        const sinkT = Math.min((Date.now() - playerCrashTime) / 1200, 1);
+        boatGroup.position.set(boatPos.x, 0.4 - 0.7 * sinkT, -boatPos.y);
+        boatGroup.rotation.y = boatPos.yaw;
+        boatGroup.rotation.z = 0.8 * sinkT;
+    } else {
+        boatGroup.position.set(boatPos.x, 0.4, -boatPos.y);
+        boatGroup.rotation.y = boatPos.yaw;
+        // Pre-existing behavior, kept as-is: this unconditionally overwrites
+        // the roll-bank effect runNavigationStep() sets (navigation.js)
+        // every frame, before render — so that roll-bank visually never
+        // actually happens. Not a new bug, not fixed here; see the
+        // file-split plan's notes.
+        boatGroup.rotation.z = 0;
+    }
 
     const targetCamPos = new THREE.Vector3(-8, 4, 0);
     targetCamPos.applyAxisAngle(new THREE.Vector3(0, 1, 0), boatPos.yaw);

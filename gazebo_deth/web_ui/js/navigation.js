@@ -11,6 +11,56 @@
 // guidance.js, ros.js (cmdVelTopic), and scene-boat.js (boatGroup, for the
 // roll-bank effect below).
 
+// Stuck-recovery maneuver — see runNavigationStep()'s entry into
+// recoveryUntil/recoveryYaw (state.js) below for why this exists as a
+// committed, multi-second maneuver rather than a single-frame reactive
+// nudge: a one-frame nudge (kill/cap speed for one tick, re-evaluate next
+// tick) let the normal plan-following logic steer straight back into
+// contact the instant it briefly cleared, producing a tight "twitch and
+// reapproach" loop rather than real escape distance. This runs instead of
+// the whole normal movement block for RECOVERY_DURATION_MS (config.js):
+// turn decisively toward the escape heading picked once at entry
+// (boundaries.js's findRecoveryYaw(), hull-aware — not just a point check),
+// while reversing at a firm, real speed — unless reversing is ALSO driving
+// into something, in which case it just pivots toward the escape heading in
+// place rather than backing into a second obstacle.
+function driveRecovery(navDt) {
+    const yd = recoveryYaw - boatPos.yaw;
+    const yawDiff = Math.atan2(Math.sin(yd), Math.cos(yd));
+    const targetAngular = Math.sign(yawDiff) * Math.min(MAX_ANGULAR, Math.abs(yawDiff) * 3.0);
+    currentAngular = approachVelocity(currentAngular, targetAngular, navDt);
+
+    const reverseBlocked = isMovingIntoObstacle(-1, false) || isExitingLake(-1);
+    const targetLinear = reverseBlocked ? 0.0 : RECOVERY_REVERSE_SPEED;
+    currentLinear = approachVelocity(currentLinear, targetLinear, navDt);
+    currentLinear = Math.max(MAX_LINEAR_REV, Math.min(MAX_LINEAR_FWD, currentLinear));
+
+    if (boatGroup) boatGroup.rotation.z = -currentAngular * 0.15;
+    cmdVelTopic.publish(new ROSLIB.Message({
+        linear: { x: currentLinear, y: 0.0, z: 0.0 },
+        angular: { x: 0.0, y: 0.0, z: currentAngular }
+    }));
+
+    const statusEl = document.getElementById('tele-status');
+    if (statusEl) {
+        statusEl.textContent = '↩️ Recovering — backing clear of obstruction...';
+        statusEl.style.color = '#ff8800';
+    }
+    document.getElementById('tele-x').textContent = boatPos.x.toFixed(2);
+    document.getElementById('tele-y').textContent = boatPos.y.toFixed(2);
+    document.getElementById('tele-speed').textContent = boatPos.speed.toFixed(2);
+}
+
+// Still-active stuck-spot breadcrumbs (state.js's recoveryBreadcrumbs), as
+// synthetic obstacle points for the live replan to route around — see
+// where recoveryBreadcrumbs is pushed to below for why this exists. Also
+// prunes expired entries in place, so the array can't grow unbounded across
+// a long session.
+function activeRecoveryBreadcrumbObstacles(now) {
+    recoveryBreadcrumbs = recoveryBreadcrumbs.filter(b => b.until > now);
+    return recoveryBreadcrumbs.map(b => ({ ros_x: b.x, ros_y: b.y }));
+}
+
 function update3DPathLine() {
     if (threePathLine) {
         scene.remove(threePathLine);
@@ -36,24 +86,61 @@ function update3DPathLine() {
 // gate the original code had, just moved to the call site instead of being
 // the first line of this function, so main.js's own `if` stays visible.
 function runNavigationStep(navDt) {
-        // Mode 1 only: pop an alert the moment the hull actually touches
-        // another ship (moored or patrolling) or a buoy — separate from the
-        // generic island/pier/shore hull-contact backstop further down,
-        // which already handles the physical stop/back-off for ALL solid
-        // obstacles but never tells the user WHAT was hit. Latched on
-        // shipCollisionAlertShown so this fires once per contact rather than
-        // spamming alert() every frame the hull stays touching.
+        // Mode 1 only: the moment the hull actually touches another ship
+        // (moored or patrolling) or a buoy — separate from the generic
+        // island/pier/shore hull-contact backstop further down, which
+        // already handles the physical stop/back-off for ALL solid
+        // obstacles but never tells the user WHAT was hit — treat it as
+        // terminal: hard-stop the boat, start the sinking animation
+        // (main.js's boat-transform step reads playerBoatCrashed/
+        // playerCrashTime), then prompt to reset. Latched on
+        // shipCollisionAlertShown so this fires once per contact, not every
+        // frame the hull stays touching.
         if (activeAppMode === 1) {
-            const hit = isTouchingShipOrBuoyAt(boatPos.x, boatPos.y);
+            const hit = isTouchingShipOrBuoyAt(boatPos.x, boatPos.y, boatPos.yaw);
             if (hit && !shipCollisionAlertShown) {
                 shipCollisionAlertShown = true;
-                alert(hit === 'ship' ? '🚢 Ship Collided! You crashed into another vessel.' : '🛟 Ship Collided! You hit a buoy.');
+                playerBoatCrashed = true;
+                playerCrashTime = Date.now();
+
+                // Hard stop — a crashed hull shouldn't keep driving into
+                // whatever it just hit. Same stop sequence used below when
+                // a path finishes normally (isNavigating=false branch).
+                isNavigating = false;
+                currentLinear = 0;
+                currentAngular = 0;
+                boatPos.speed = 0;
+                cmdVelTopic.publish(new ROSLIB.Message({
+                    linear: { x: 0.0, y: 0.0, z: 0.0 },
+                    angular: { x: 0.0, y: 0.0, z: 0.0 }
+                }));
+
+                // Delayed so the sinking animation gets a few rendered
+                // frames in before this synchronous dialog freezes the tab.
+                setTimeout(() => {
+                    const wantsReset = confirm(
+                        (hit === 'ship' ? '🚢 Ship Collided! You crashed into another vessel.' : '🛟 Ship Collided! You hit a buoy.') +
+                        '\n\nYour boat is taking on water. Stop and reset the simulation?'
+                    );
+                    if (wantsReset) document.getElementById('btn-reset').click();
+                }, 1200);
             } else if (!hit) {
                 shipCollisionAlertShown = false;
             }
         }
 
         const now = Date.now();
+
+        // A committed recovery maneuver is in progress (entered below, near
+        // the hull-contact backstop) — run it instead of everything else
+        // this frame (live replan included: replanning from a position the
+        // boat is actively backing away from would just recompute a route
+        // back toward the same spot it's trying to clear).
+        if (isNavigating && now < recoveryUntil) {
+            driveRecovery(navDt);
+            return;
+        }
+
         // Receding Horizon Sensor Scan: Recalculate path live every 250ms based on local 25m sensor horizon.
         // Mode 3 docking used to be fully excluded from this — its own
         // dedicated branch below now gives it the same live replanning
@@ -69,7 +156,7 @@ function runNavigationStep(navDt) {
                 if (ent.type === 'goal' || ent.isCrashed) return false;
                 const dist = Math.hypot(ent.ros_x - boatPos.x, ent.ros_y - boatPos.y);
                 return dist <= 25.0; // 25-meter sensor horizon
-            });
+            }).concat(activeRecoveryBreadcrumbObstacles(now));
 
             const newPath = findOptimalPath(
                 { x: boatPos.x, y: boatPos.y },
@@ -107,7 +194,7 @@ function runNavigationStep(navDt) {
                 if (ent.type === 'goal' || ent.isCrashed) return false;
                 const dist = Math.hypot(ent.ros_x - boatPos.x, ent.ros_y - boatPos.y);
                 return dist <= 25.0;
-            });
+            }).concat(activeRecoveryBreadcrumbObstacles(now));
 
             const newTransit = findOptimalPath(
                 { x: boatPos.x, y: boatPos.y },
@@ -407,10 +494,54 @@ function runNavigationStep(navDt) {
                 // autonomous run — so a forward block backs off a little instead
                 // of freezing at zero, so a graze against real hull geometry
                 // doesn't strand the mission needing a manual Reset.
-                if (currentLinear > 0 && (isMovingIntoObstacle(1) || isExitingLake(1))) {
-                    currentLinear = Math.max(MAX_LINEAR_REV, -0.6);
-                } else if (currentLinear < 0 && (isMovingIntoObstacle(-1) || isExitingLake(-1))) {
-                    currentLinear = 0;
+                // Mode 3's final docking legs (align/approach/creep/reverse_swing)
+                // deliberately drive the hull right up against the pier/jetty wall
+                // it's docking at — that contact is the intended destination, not a
+                // collision to fight. Without this, the boat would reach real hull
+                // contact just short of the creep target, get read as "grazing an
+                // obstacle," and get braked/backed off every frame — the exact
+                // "never quite stops / settles" behavior this exists to fix. Every
+                // OTHER contact (moored vessels, buoys, the island) still applies —
+                // this only exempts the one wall the boat is actively docking
+                // against, and only during those close-quarters legs.
+                const dockingAgainstWall = isAutoDocking &&
+                    (target.mode === 'align' || target.mode === 'approach' ||
+                     target.mode === 'creep' || target.mode === 'reverse_swing');
+                const forwardStuck = currentLinear > 0 && (isMovingIntoObstacle(1, dockingAgainstWall) || isExitingLake(1));
+                const reverseStuck = currentLinear < 0 && (isMovingIntoObstacle(-1, dockingAgainstWall) || isExitingLake(-1));
+                if (forwardStuck) currentLinear = Math.max(MAX_LINEAR_REV, -0.6);
+                else if (reverseStuck) currentLinear = 0;
+
+                // Genuinely wedged against something outside an active docking
+                // maneuver (e.g. clipped a jetty/pier corner mid-transit): enter
+                // a committed recovery maneuver (driveRecovery(), defined near
+                // the top of this file) instead of the single-frame -0.6 cap
+                // above being all that ever happens. That single-frame nudge
+                // wasn't real distance — the instant contact briefly cleared,
+                // the normal plan-following logic below immediately steered
+                // straight back into it, a tight "twitch and reapproach" loop
+                // that never actually got clear. The escape heading
+                // (findRecoveryYaw(), boundaries.js — hull-aware, unlike
+                // localCorrectedYaw()'s point-only every-tick check, which could
+                // call the current blocked heading "already clear" and never
+                // actually turn) is picked ONCE here and held for the whole
+                // maneuver, not recomputed every frame.
+                if ((forwardStuck || reverseStuck) && !dockingAgainstWall) {
+                    // Mark this spot so the live replan (above) is forced to
+                    // route around it for a while instead of just re-finding
+                    // the same route back through it — see
+                    // activeRecoveryBreadcrumbObstacles() and
+                    // RECOVERY_BREADCRUMB_DURATION_MS (config.js) for why:
+                    // without this, backing off here did nothing on its own
+                    // when the replan's TARGET sits behind this exact choke
+                    // point — the very next 250ms replan just recomputed the
+                    // same route straight back into it.
+                    recoveryBreadcrumbs.push({ x: boatPos.x, y: boatPos.y, until: now + RECOVERY_BREADCRUMB_DURATION_MS });
+                    recoveryYaw = findRecoveryYaw(boatPos.x, boatPos.y, boatPos.yaw) ??
+                        localCorrectedYaw(boatPos.x, boatPos.y, currentLinear, boatPos.yaw, entities, false);
+                    recoveryUntil = now + RECOVERY_DURATION_MS;
+                    driveRecovery(navDt);
+                    return;
                 }
 
                 // --- Angular: proportional heading control, capped at MAX_ANGULAR ---

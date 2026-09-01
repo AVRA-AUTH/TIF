@@ -212,7 +212,7 @@ function isExitingLake(direction) {
 // (Mode 2's two drive schemes, Mode 1/3's auto-nav) right before publishing,
 // rather than cached, since draw() and thrusterLoop() are independent rAF
 // loops with no guaranteed ordering.
-function isTouchingObstacleAt(x, y, yaw) {
+function isTouchingObstacleAt(x, y, yaw, ignoreMarinaStructure) {
     // ISLAND_KEEP_OUT (33m), not ISLAND_RADIUS+0.5 (25.5m): the rendered
     // island mesh — grass cylinder plus its sand-beach ring
     // (islandSandGeo = CylinderGeometry(26.5, 30, ...)) — visually extends
@@ -228,17 +228,26 @@ function isTouchingObstacleAt(x, y, yaw) {
     const hullXExtent = Math.abs(Math.cos(yaw)) * 2.8 + Math.abs(Math.sin(yaw)) * 0.8;
     const hullYExtent = Math.abs(Math.sin(yaw)) * 2.8 + Math.abs(Math.cos(yaw)) * 0.8;
 
-    // Main Spine Pier — canonical geometry (see MARINA_PIER_* consts, defined
-    // near the 3D mesh that also reads them, further down this file).
-    if (y - hullYExtent <= MARINA_PIER_Y && x + hullXExtent >= MARINA_PIER_X_MIN && x - hullXExtent <= MARINA_PIER_X_MAX) {
-        return true;
-    }
+    // Main Spine Pier / Finger Jetties — canonical geometry (see MARINA_PIER_*/
+    // JETTY_* consts, defined near the 3D mesh that also reads them, further
+    // down this file). Skipped when ignoreMarinaStructure is set: Mode 3's
+    // final docking legs (align/approach/creep/reverse_swing) deliberately
+    // drive the hull right up against this exact geometry — that's what
+    // "docked" means — so this generic backstop must not treat the intended
+    // contact as a collision to fight. Every OTHER contact case (moored
+    // vessels, buoys/dynamic entities, the island) still applies below,
+    // unconditionally — this only carves out the wall the boat is actively
+    // trying to dock against.
+    if (!ignoreMarinaStructure) {
+        if (y - hullYExtent <= MARINA_PIER_Y && x + hullXExtent >= MARINA_PIER_X_MIN && x - hullXExtent <= MARINA_PIER_X_MAX) {
+            return true;
+        }
 
-    // Finger Jetties — canonical geometry (JETTY_X_LIST/JETTY_HALF_WIDTH/JETTY_Y_NEAR/JETTY_Y_FAR).
-    for (const jx of JETTY_X_LIST) {
-        const overlapsX = (x + hullXExtent >= jx - JETTY_HALF_WIDTH) && (x - hullXExtent <= jx + JETTY_HALF_WIDTH);
-        const overlapsY = (y + hullYExtent >= JETTY_Y_FAR) && (y - hullYExtent <= JETTY_Y_NEAR);
-        if (overlapsX && overlapsY) return true;
+        for (const jx of JETTY_X_LIST) {
+            const overlapsX = (x + hullXExtent >= jx - JETTY_HALF_WIDTH) && (x - hullXExtent <= jx + JETTY_HALF_WIDTH);
+            const overlapsY = (y + hullYExtent >= JETTY_Y_FAR) && (y - hullYExtent <= JETTY_Y_NEAR);
+            if (overlapsX && overlapsY) return true;
+        }
     }
 
     // Moored vessels along the jetties
@@ -265,8 +274,8 @@ function isTouchingObstacleAt(x, y, yaw) {
     return false;
 }
 
-function isTouchingObstacle() {
-    return isTouchingObstacleAt(boatPos.x, boatPos.y, boatPos.yaw);
+function isTouchingObstacle(ignoreMarinaStructure) {
+    return isTouchingObstacleAt(boatPos.x, boatPos.y, boatPos.yaw, ignoreMarinaStructure);
 }
 
 // Narrower companion to isTouchingObstacleAt() above — only the "another
@@ -274,9 +283,20 @@ function isTouchingObstacle() {
 // entities placed in Mode 1), NOT the island/pier/jetty/shoreline geometry.
 // Returns 'ship', 'buoy', or null, so a Mode 1 collision popup (input.js)
 // can tell "hit a boat" from "hit a buoy" apart from a plain grounding.
-// Same hull-contact radii as isTouchingObstacleAt (2.0m moored vessels,
-// 1.7m buoys/dynamic entities) so this agrees with the physical backstop.
-function isTouchingShipOrBuoyAt(x, y) {
+//
+// Box-aware, not a flat center-to-center radius: the old version only fired
+// once the boat's CENTER point got within a fixed radius of the target's
+// center, which in practice only ever tripped nose-on (or fully
+// overlapping) — a moored/patrol boat's hull sticks out well past that
+// radius along its own length, so scraping its side never registered. Now
+// every hull is modeled as its actual (yaw-aware) oriented footprint — same
+// idiom isTouchingObstacleAt() above already uses for the pier/jetty boxes
+// (hullXExtent/hullYExtent from yaw) — so real hull-to-hull contact counts
+// from any angle, not just bow-to-bow.
+function isTouchingShipOrBuoyAt(x, y, yaw) {
+    const hullXExtent = Math.abs(Math.cos(yaw)) * 2.8 + Math.abs(Math.sin(yaw)) * 0.8;
+    const hullYExtent = Math.abs(Math.sin(yaw)) * 2.8 + Math.abs(Math.cos(yaw)) * 0.8;
+
     for (let b = -168 * WORLD_SCALE; b <= -128 * WORLD_SCALE; b += 6.5 * WORLD_SCALE) {
         if (Math.abs(b - (-147.5 * WORLD_SCALE)) > 3.0) {
             const parkedLocs = [
@@ -284,18 +304,64 @@ function isTouchingShipOrBuoyAt(x, y) {
                 { x: -200.5 * WORLD_SCALE, y: b }, { x: -189.5 * WORLD_SCALE, y: b },
                 { x: -150.5 * WORLD_SCALE, y: b }, { x: -139.5 * WORLD_SCALE, y: b }
             ];
+            // Moored hulls sit unrotated in their berth (createMooredBoat()
+            // in scene-marina.js: rotation.y = 0, up to 3.6m long x 1.45m
+            // wide) — a plain axis-aligned box vs. our own hull's box, same
+            // overlap test as the jetty boxes above.
             for (const pl of parkedLocs) {
-                if (Math.hypot(pl.x - x, pl.y - y) < 2.0) return 'ship';
+                if (Math.abs(pl.x - x) <= hullXExtent + 1.8 && Math.abs(pl.y - y) <= hullYExtent + 0.73) return 'ship';
             }
         }
     }
 
     for (const ent of entities) {
-        if (ent.type === 'dynamic' && Math.hypot(ent.ros_x - x, ent.ros_y - y) < 1.7) return 'ship';
-        if (ent.type === 'static' && Math.hypot(ent.ros_x - x, ent.ros_y - y) < 1.7) return 'buoy';
+        if (ent.type === 'dynamic') {
+            // Patrol boat has its own heading — approximate its footprint
+            // the same oriented-box way as our own hull (hull box 3.8 long
+            // x 1.5 wide, plus the tapered bow nose).
+            const eh = ent.heading || 0;
+            const entXExtent = Math.abs(Math.cos(eh)) * 2.6 + Math.abs(Math.sin(eh)) * 0.75;
+            const entYExtent = Math.abs(Math.sin(eh)) * 2.6 + Math.abs(Math.cos(eh)) * 0.75;
+            if (Math.abs(ent.ros_x - x) <= hullXExtent + entXExtent && Math.abs(ent.ros_y - y) <= hullYExtent + entYExtent) return 'ship';
+        } else if (ent.type === 'static' && !ent.isParkedShip) {
+            // Small round buoy body (0.55m radius, per its CylinderGeometry
+            // in entities-3d.js) — box-vs-circle: clamp the buoy's center
+            // into our hull box, then test the leftover distance against
+            // its own radius (plus a small touch buffer).
+            const closestX = Math.max(x - hullXExtent, Math.min(ent.ros_x, x + hullXExtent));
+            const closestY = Math.max(y - hullYExtent, Math.min(ent.ros_y, y + hullYExtent));
+            if (Math.hypot(closestX - ent.ros_x, closestY - ent.ros_y) < 0.65) return 'buoy';
+        }
     }
 
     return null;
+}
+
+// Mode 1 design-phase placement guard — used by placeMode1EntityAt() (input.js)
+// to reject a buoy/patrol-boat spawn point that would already be touching
+// the player's own hull at its current (stationary, pre-RUN) pose. Without
+// this, clicking right next to — or on top of — the boat spawned an
+// obstacle already in contact, which isTouchingShipOrBuoyAt()'s improved
+// box-aware detection above would then report as a collision the player
+// never actually drove into.
+// entityType is 'dynamic' or 'static' (the same currentMode values
+// placeMode1EntityAt() already switches on) — 'goal' never reaches here.
+function wouldObstaclePlacementCollideWithBoat(rx, ry, entityType) {
+    const hullXExtent = Math.abs(Math.cos(boatPos.yaw)) * 2.8 + Math.abs(Math.sin(boatPos.yaw)) * 0.8;
+    const hullYExtent = Math.abs(Math.sin(boatPos.yaw)) * 2.8 + Math.abs(Math.cos(boatPos.yaw)) * 0.8;
+
+    // Patrol boats don't get a heading until the first sim tick after RUN
+    // (navigation.js lazily sets entity.heading = random on first update),
+    // so there's no orientation yet to build an oriented box from at
+    // placement time — fall back to a circle sized to the hull's own
+    // half-diagonal (covers 2.6 x 0.75 half-extents from entities-3d.js's
+    // model regardless of which way it ends up facing). Buoys use the same
+    // 0.65 body-radius-plus-buffer as isTouchingShipOrBuoyAt() above.
+    const entRadius = entityType === 'dynamic' ? 2.7 : 0.65;
+
+    const closestX = Math.max(boatPos.x - hullXExtent, Math.min(rx, boatPos.x + hullXExtent));
+    const closestY = Math.max(boatPos.y - hullYExtent, Math.min(ry, boatPos.y + hullYExtent));
+    return Math.hypot(closestX - rx, closestY - ry) < entRadius;
 }
 
 // Direction-aware obstacle check — same step-prediction idea as
@@ -321,16 +387,65 @@ function isTouchingShipOrBuoyAt(x, y) {
 // and sail right through it. isMovingDeeperIntoMarina() (above) closes that
 // gap with a penetration-depth gradient instead of a boolean, so it's OR'd
 // in independently rather than folded into the ambiguity fallback above.
-function isMovingIntoObstacle(direction) {
+// ignoreMarinaStructure: passed straight through to the pier/jetty backstop
+// (see isTouchingObstacleAt) AND used to skip isMovingDeeperIntoMarina()
+// below (the same wall, just checked via penetration depth instead of a
+// boolean) — see runNavigationStep()'s docking close-quarters call in
+// navigation.js for why this exists.
+function isMovingIntoObstacle(direction, ignoreMarinaStructure) {
     let genericBlocked = false;
-    if (isTouchingObstacle()) {
+    if (isTouchingObstacle(ignoreMarinaStructure)) {
         const stepX = boatPos.x + direction * Math.cos(boatPos.yaw) * 0.5;
         const stepY = boatPos.y + direction * Math.sin(boatPos.yaw) * 0.5;
         const oppStepX = boatPos.x - direction * Math.cos(boatPos.yaw) * 0.5;
         const oppStepY = boatPos.y - direction * Math.sin(boatPos.yaw) * 0.5;
-        const thisBlocked = isTouchingObstacleAt(stepX, stepY, boatPos.yaw);
-        const oppBlocked = isTouchingObstacleAt(oppStepX, oppStepY, boatPos.yaw);
+        const thisBlocked = isTouchingObstacleAt(stepX, stepY, boatPos.yaw, ignoreMarinaStructure);
+        const oppBlocked = isTouchingObstacleAt(oppStepX, oppStepY, boatPos.yaw, ignoreMarinaStructure);
         genericBlocked = !(thisBlocked && oppBlocked) && thisBlocked;
     }
-    return genericBlocked || isMovingDeeperIntoMarina(direction);
+    return genericBlocked || (!ignoreMarinaStructure && isMovingDeeperIntoMarina(direction));
+}
+
+// Stuck-recovery heading search — used by runNavigationStep() (navigation.js)
+// only once the linear backstop above has already found the boat genuinely
+// wedged. guidance.js's localCorrectedYaw() (the normal every-tick local
+// correction) is deliberately lightweight for that every-frame transit use:
+// it checks the boat as a single POINT (pathfinding.js's isPointBlocked) over
+// a short lookahead. Right against a wall that's not enough — the hull
+// extends up to ~2.9m off-center when turning (hullXExtent/hullYExtent
+// below), so the boat's CENTER can sit comfortably outside the exact
+// structure box while the HULL is still touching it. That let the point-only
+// search call the current (blocked) heading "already clear" and never
+// actually turn — the boat just sat there re-trying the same heading every
+// frame. This reuses the SAME hull-inclusive test the real backstop
+// (isMovingIntoObstacle) uses, over a real ~1.5-hull-length lookahead
+// (RECOVERY_LOOKAHEAD, sampled at a few points along the way so a heading
+// that's clear at the end but clips something partway isn't picked), and
+// sweeps a FULL 360deg fan in fixed steps rather than a narrow offset from
+// the current heading — a genuinely wedged boat may need more than a small
+// nudge to find daylight. Ties are broken by smallest turn from the current
+// heading (cheapest escape to actually execute). Returns null if truly
+// nowhere is clear (deeply wedged); the caller falls back to the lighter
+// localCorrectedYaw() in that rare case.
+const RECOVERY_HEADING_STEP = Math.PI / 12; // 15 degrees
+const RECOVERY_LOOKAHEAD = 4.0;             // meters
+const RECOVERY_SAMPLES = 4;
+function findRecoveryYaw(x, y, currentYaw) {
+    let best = null, bestTurn = Infinity;
+    const steps = Math.round((2 * Math.PI) / RECOVERY_HEADING_STEP);
+    for (let i = 0; i < steps; i++) {
+        const candYaw = currentYaw + i * RECOVERY_HEADING_STEP;
+        let clear = true;
+        for (let s = 1; s <= RECOVERY_SAMPLES; s++) {
+            const d = (RECOVERY_LOOKAHEAD * s) / RECOVERY_SAMPLES;
+            const testX = x + Math.cos(candYaw) * d;
+            const testY = y + Math.sin(candYaw) * d;
+            if (isTouchingObstacleAt(testX, testY, candYaw)) { clear = false; break; }
+        }
+        if (!clear) continue;
+        let turn = candYaw - currentYaw;
+        turn = Math.atan2(Math.sin(turn), Math.cos(turn));
+        if (Math.abs(turn) < bestTurn) { bestTurn = Math.abs(turn); best = candYaw; }
+    }
+    return best;
 }

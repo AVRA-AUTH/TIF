@@ -42,9 +42,33 @@ let dockingTarget = null;
 // Mode 1 ship/buoy collision popup (navigation.js) — latched so the alert()
 // fires once per contact instead of every frame the hull stays touching.
 let shipCollisionAlertShown = false;
+// Mode 1 player-hull sink state (navigation.js sets these on a crash,
+// main.js's boat-transform step reads them to ease in the tilt/submerge
+// look). playerCrashTime anchors the animation's elapsed-time easing.
+let playerBoatCrashed = false;
+let playerCrashTime = 0;
 
 let isAutoDocking = false;
 let dockingBerthName = '';
+
+// Stuck-recovery state (navigation.js's driveRecovery()) — a committed
+// multi-second reverse-and-turn maneuver, not a per-frame reactive nudge.
+// recoveryUntil is a Date.now()-style timestamp (0 = not currently
+// recovering); recoveryYaw is the escape heading picked once at entry
+// (boundaries.js's findRecoveryYaw()) and held for the whole maneuver
+// instead of being recomputed — and potentially flip-flopping — every frame.
+let recoveryUntil = 0;
+let recoveryYaw = 0;
+// Breadcrumbs of recent stuck spots ({x, y, until}) — see navigation.js's
+// activeRecoveryBreadcrumbObstacles(). Backing off on its own doesn't help
+// when the live replan's target sits behind the same choke point: without
+// this, the very next 250ms replan just re-finds the same route back
+// through the same spot the boat only just cleared, producing an endless
+// back-off/re-approach loop rather than genuine progress. Fed into the live
+// replan's obstacle list as synthetic obstacles for a while so it's forced
+// to actually route around a spot that already proved to be a dead end,
+// instead of having no memory of it at all.
+let recoveryBreadcrumbs = [];
 
 // Mode 2 manual-drive state (thruster loop, input.js).
 let currentLinear = 0.0;
