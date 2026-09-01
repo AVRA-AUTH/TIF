@@ -17,16 +17,14 @@ Install Docker for your platform:
 - **macOS**: [Docker Desktop](https://docs.docker.com/desktop/install/mac-install/)
 
 No other software is required — the container carries its own Ubuntu 24.04 +
-ROS 2 Jazzy + Gazebo Harmonic environment.
-
-**One extra local requirement**: `docker/Dockerfile` copies VRX's compiled
+ROS 2 Jazzy + Gazebo Harmonic environment. `docker/Dockerfile` builds VRX's
 `libSurface.so`/`libSimpleHydrodynamics.so` buoyancy/hydrodynamics plugins
-out of a `vrx_jazzy:latest` image at build time (see `HANDOFF.md`), so that
-image must already exist locally (`docker images | grep vrx_jazzy`) before
-running `docker build` below — it isn't published on a registry this
-Dockerfile can pull automatically. If it's missing on your machine, ask
-whoever has it for the image (`docker save`/`docker load`), or see
-`HANDOFF.md` for how to build it from VRX's source.
+from source as its own build stage — no separate image or
+pre-step needed; it's all part of the one `docker build` below. That stage
+does compile ROS 2 + Gazebo + VRX from source, so the *first* build is slow
+(tens of minutes, several GB) — normal, not a sign anything's wrong. Docker
+caches it afterward, so it won't rerun unless that part of the Dockerfile
+itself changes.
 
 ## Quick start (all platforms)
 
@@ -42,8 +40,8 @@ docker build -f docker/Dockerfile -t asv_exhibition .
 docker run --rm -p 9090:9090 asv_exhibition
 ```
 The first build downloads and compiles a fair amount (ROS 2 Jazzy desktop +
-Gazebo + Nav2, plus VRX's buoyancy/hydrodynamics plugins copied from the
-locally-built `vrx_jazzy` image), so it can take several
+Gazebo + Nav2, plus VRX's buoyancy/hydrodynamics plugins built from source in
+their own stage), so it can take several
 minutes. After that, Docker only rebuilds layers that actually changed, so
 re-running the build command costs almost nothing unless `docker/` or `src/`
 changed since last time. Once the
@@ -56,57 +54,6 @@ should turn green — **Connected to ROS**.
 
 To stop the simulation, `Ctrl+C` in the terminal running `docker run` — the
 `--rm` flag cleans up the container automatically.
-
-## Platform-specific notes
-
-### Ubuntu / generic Linux
-
-The Quick Start above works as-is. On native Linux you can optionally use
-`--network host` instead of `-p 9090:9090` — functionally equivalent here,
-just one less flag to remember:
-
-```
-docker run --rm --network host asv_exhibition
-```
-
-If you're specifically on **Ubuntu 22.04** (not 24.04 or newer), you also
-have the option to skip Docker entirely: install ROS 2 Humble + Gazebo
-directly via [setup_ubuntu.sh](setup_ubuntu.sh), then from `gazebo_deth/`,
-`colcon build`, `source install/setup.bash`, and
-`ros2 launch asv_exhibition exhibition.launch.py`. Note this native path
-still installs the older Humble/Gazebo Fortress stack — `setup_ubuntu.sh`
-hasn't been updated alongside the Docker path's move to Jazzy/Harmonic, so
-it won't have the real buoyancy/hydrodynamics physics described above.
-(Also: [run.sh](run.sh) in this folder assumes a WSL2 setup with a
-Windows-side source copy — it's not meant for a true native Ubuntu install,
-so use the commands above instead.) Docker is still recommended if you want
-your environment to match the rest of the team exactly, regardless of your
-Ubuntu version.
-
-### Windows
-
-Use Docker Desktop with the WSL2 backend. Run the exact commands from the
-Quick Start in PowerShell or Command Prompt — `-p 9090:9090` is required here
-(`--network host` isn't reliably supported on Docker Desktop). Open
-`web_ui\index.html` by double-clicking it in File Explorer; Docker Desktop
-forwards the published port to Windows' `localhost` the same way it does on
-Linux.
-
-Expect the simulation to run noticeably slower than on native Linux — Docker
-Desktop on Windows runs containers inside a VM, which adds overhead for a
-physics-heavy sim like Gazebo.
-
-### macOS
-
-Use Docker Desktop the same way as Windows: `-p 9090:9090`, open
-`web_ui/index.html` by double-clicking it.
-
-**Apple Silicon (M1/M2/M3/M4) caveat:** the ROS 2 Jazzy base image this
-project uses is only published for `amd64` (Intel/AMD), not `arm64`. On
-Apple Silicon, Docker Desktop will run it under emulation (Rosetta), which
-will be considerably slower — the build in particular may take a long time,
-and simulation performance will suffer. Intel Macs run it natively with no
-such penalty.
 
 ## What you'll see
 

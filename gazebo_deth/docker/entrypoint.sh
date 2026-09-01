@@ -19,9 +19,9 @@ source /workspace/install/setup.bash
 # meshes installed alongside the world file.
 export GZ_SIM_RESOURCE_PATH="/workspace/install/asv_exhibition/share/asv_exhibition/models:${GZ_SIM_RESOURCE_PATH}"
 
-# So the vrx::Surface / vrx::SimpleHydrodynamics plugins (copied into the
-# image from vrx_jazzy) resolve by filename="libSurface.so" etc. in
-# exhibition_water.sdf.
+# So the vrx::Surface / vrx::SimpleHydrodynamics plugins (built from VRX
+# source in the Dockerfile's vrx_plugins stage) resolve by
+# filename="libSurface.so" etc. in exhibition_water.sdf.
 export GZ_SIM_SYSTEM_PLUGIN_PATH="/opt/vrx_plugins:${GZ_SIM_SYSTEM_PLUGIN_PATH}"
 # libSurface.so's own transitive dependency (libWaves.so) isn't found via
 # GZ_SIM_SYSTEM_PLUGIN_PATH — that only controls where gz looks for the
