@@ -129,8 +129,16 @@ function renderMarina2D(mapScale) {
     entities.forEach(ent => {
         if (!ent.isParkedShip) return;
         const p = rosToCanvas(ent.ros_x, ent.ros_y);
+        const w = 3.5 * s, h = 6 * s;
         ctx.fillStyle = bColors2D[Math.abs(Math.floor(ent.ros_x * 10 + ent.ros_y)) % bColors2D.length];
-        ctx.fillRect(p.x - (3.5 * s) / 2, p.y - (6 * s) / 2, 3.5 * s, 6 * s); // width 3.5, height 6, centered on the boat's real position
+        ctx.fillRect(p.x - w / 2, p.y - h / 2, w, h); // width 3.5, height 6, centered on the boat's real position
+        // Thin dark outline so a "slot has a boat" reads clearly against the
+        // jetty even when hulls are packed edge-to-edge — no separate
+        // keep-out ring/dot needed on top (renderEntities2D skips these
+        // entities entirely; this rectangle IS their whole representation).
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.6)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(p.x - w / 2, p.y - h / 2, w, h);
     });
 
     // Draw Dynamic Target Berth Marker on 2D Map if active
@@ -153,21 +161,36 @@ function renderMarina2D(mapScale) {
         ctx.fillText('⚓ Selected Berth', bp.x, bp.y - 16);
         ctx.restore();
     }
-        // Hover Preview: highlight the nearest valid docking spot under the cursor,
-    // before the user actually clicks (Mode 3 only). hoveredBerth is set by
-    // input.js's mousemove listener; guarded with typeof since this file
-    // loads before input.js declares it (only matters at call-time, which
-    // happens later in the draw() loop, by when it always exists).
+        // Hover Preview: highlight whatever pier/jetty face is under the
+    // cursor (Mode 3 only), color-coded by status — not just "is this
+    // dockable," but WHY not, so scanning the packed jetty by eye (or
+    // sweeping the mouse along it) tells occupied from open without
+    // clicking each slot and reading an alert(). hoveredBerth is
+    // {berth, status} from input.js's mousemove listener (status: 'open' |
+    // 'occupied' | 'blocked'); guarded with typeof since this file loads
+    // before input.js declares it (only matters at call-time, which happens
+    // later in the draw() loop, by when it always exists).
     if (activeAppMode === 3 && typeof hoveredBerth !== 'undefined' && hoveredBerth) {
-        const hp = rosToCanvas(hoveredBerth.ros_x, hoveredBerth.ros_y);
+        const hp = rosToCanvas(hoveredBerth.berth.ros_x, hoveredBerth.berth.ros_y);
+        const statusStyle = {
+            open: { color: '#00ffcc', fill: 'rgba(0, 255, 204, 0.15)', label: '✅ Open — click to dock' },
+            occupied: { color: '#ff4d4d', fill: 'rgba(255, 77, 77, 0.15)', label: '⛔ Occupied' },
+            blocked: { color: '#ff9800', fill: 'rgba(255, 152, 0, 0.15)', label: '🚫 Blocked' }
+        }[hoveredBerth.status];
+
         ctx.save();
         ctx.beginPath();
         ctx.arc(hp.x, hp.y, 10, 0, 2 * Math.PI);
-        ctx.strokeStyle = '#00ffcc';
+        ctx.strokeStyle = statusStyle.color;
         ctx.lineWidth = 2;
         ctx.stroke();
-        ctx.fillStyle = 'rgba(0, 255, 204, 0.15)';
+        ctx.fillStyle = statusStyle.fill;
         ctx.fill();
+
+        ctx.font = 'bold 10px sans-serif';
+        ctx.fillStyle = statusStyle.color;
+        ctx.textAlign = 'center';
+        ctx.fillText(statusStyle.label, hp.x, hp.y - 14);
         ctx.restore();
     }
 
@@ -223,6 +246,18 @@ function renderIsland2D(mapScale) {
 // Draw Entities & Imaginary Dotted Safety Keep-Out Circles
 function renderEntities2D(mapScale) {
     entities.forEach(entity => {
+        // The ~30 baked-in moored boats get their own compact rectangle +
+        // occupied/open hover status further down in renderMarina2D()
+        // (called earlier in the draw() order) — that's their whole
+        // representation. They're also type 'static' (same as a
+        // player-placed buoy), so without this early return they'd ALSO
+        // fall into the generic buoy branches below and stack a keep-out
+        // ring + dot per boat on top of the rectangle, which at the packed
+        // marina's <40cm slot spacing turned into one cluttered blob per
+        // jetty — the actual thing making it hard to tell "does this slot
+        // already have a boat" at a glance.
+        if (entity.isParkedShip) return;
+
         const p = rosToCanvas(entity.ros_x, entity.ros_y);
 
         // Draw Visual Restrictive Imaginary Dotted Safety Circle

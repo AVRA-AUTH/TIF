@@ -100,9 +100,19 @@ function findBerthDescriptor(rx, ry, isParallel) {
 
 // Does this berth overlap a parked vessel on the finger jetties? Shared by
 // the click handler and the hover probe so both agree on what's occupied.
+// Checks the real moored-boat entities (isParkedShip) instead of a
+// hardcoded "whole jetty y-range minus one named gap" heuristic — that
+// heuristic predates scene-marina.js thinning each jetty to every OTHER
+// slot (idx % 2 !== 0 skip, "more open choices"), so it was calling every
+// one of those now-empty in-between slots "Occupied" too, with no boat
+// actually there. 4.0m covers the real x offset between a boat's own
+// position and this berth's computed docking-target x (up to ~2.4m) plus
+// a little slack, while staying well under the ~6.5m gap to the next
+// slot along the jetty (occupied or empty) so neighbors don't bleed in.
 function isBerthOccupied(berth) {
-    return berth.ros_y <= -128.0 * WORLD_SCALE && berth.ros_y >= -168.0 * WORLD_SCALE &&
-        Math.abs(berth.ros_y - (-147.5 * WORLD_SCALE)) > 3.5 && berth.name.includes('Jetty');
+    if (!berth.name.includes('Jetty')) return false;
+    return entities.some(ent => ent.isParkedShip &&
+        Math.hypot(ent.ros_x - berth.ros_x, ent.ros_y - berth.ros_y) < 4.0);
 }
 
 // Is this berth blocked by a Mode-1-placed static/dynamic obstacle? Shared
@@ -114,17 +124,17 @@ function isBerthBlocked(berth) {
 
 // Silent version for hover preview — same berth-search + validity logic as
 // detectBerthAtClick() below (via the shared helpers above), no alert()s.
-// Used to be a separate, simpler search with no occupied/obstacle checks at
-// all, so hovering could highlight a spot as "valid" that would immediately
-// reject with an alert() on click (an already-occupied jetty slip, or a spot
-// blocked by a placed obstacle) — now it only ever reports a spot as
-// dockable if a real click there would actually succeed.
-function probeBerthCandidate(rx, ry, isParallel) {
+// Reports occupied/blocked spots too (with which reason), not just
+// dockable-or-null, so sweeping the mouse along a packed jetty immediately
+// shows red "already has a boat" / orange "blocked by a placed obstacle" vs
+// green "open" in the hover preview (render-2d.js's renderMarina2D), instead
+// of going silent on an invalid spot until you click and read an alert().
+function probeBerthHoverStatus(rx, ry, isParallel) {
     const bestBerth = findBerthDescriptor(rx, ry, isParallel);
     if (!bestBerth) return null;
-    if (isBerthOccupied(bestBerth)) return null;
-    if (isBerthBlocked(bestBerth)) return null;
-    return bestBerth;
+    if (isBerthOccupied(bestBerth)) return { berth: bestBerth, status: 'occupied' };
+    if (isBerthBlocked(bestBerth)) return { berth: bestBerth, status: 'blocked' };
+    return { berth: bestBerth, status: 'open' };
 }
 
 // Mode 3 berth detection — given a map click already converted to ROS

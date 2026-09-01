@@ -26,7 +26,11 @@ canvas.addEventListener('mousemove', (e) => {
     const { rx, ry } = canvasToRos(cx, cy);
     const dockTypeSel = document.getElementById('dock-type-selector');
     const isParallel = dockTypeSel ? (dockTypeSel.value === 'parallel') : true;
-    hoveredBerth = probeBerthCandidate(rx, ry, isParallel);
+    // {berth, status} now, not just a dockable-or-null berth — see
+    // probeBerthHoverStatus() (docking.js) for why: it lets the hover
+    // preview (render-2d.js) show occupied/blocked spots in red/orange
+    // instead of going silent on them.
+    hoveredBerth = probeBerthHoverStatus(rx, ry, isParallel);
 });
 
 
