@@ -2,9 +2,18 @@
 // Depends on config.js (topic names use no config, but odom subscription
 // updates boatPos/DOF panel from state.js/dof-panel.js — load after both).
 
-// Connect to ROS via roslibjs
+// Connect to ROS via roslibjs.
+// Local dev (python3 -m http.server) hits rosbridge directly on 9090.
+// Anything else (e.g. served through proxy/server.js for a tunnel) goes
+// through the same origin's /rosbridge path, so a single tunnel/URL covers
+// both the page and the websocket.
+const isLocalDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+const rosbridgeUrl = isLocalDev
+    ? 'ws://localhost:9090'
+    : `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/rosbridge`;
+
 const ros = new ROSLIB.Ros({
-    url: 'ws://localhost:9090'
+    url: rosbridgeUrl
 });
 
 const statusEl = document.getElementById('status');

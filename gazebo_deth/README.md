@@ -55,6 +55,53 @@ should turn green — **Connected to ROS**.
 To stop the simulation, `Ctrl+C` in the terminal running `docker run` — the
 `--rm` flag cleans up the container automatically.
 
+## Sharing it for an event
+
+`web_ui/index.html` normally talks to rosbridge directly at `ws://localhost:9090`,
+which only works when the page and the container are on the same machine. To
+hand the demo to a phone/laptop over the internet, run the bundled server
+instead of opening the file directly — it serves `web_ui/` and proxies the
+rosbridge websocket under the same origin (`/rosbridge`), so one tunnel URL
+covers both. `js/ros.js` already detects it's not on `localhost` and switches
+to `wss://<that host>/rosbridge` automatically — no other setup needed.
+
+This needs two extra things installed on the machine acting as the server
+(not inside Docker, and not needed at all for plain local dev):
+[Node.js](https://nodejs.org/) (any recent LTS) for `web_ui/server.js`, and
+[`cloudflared`](https://github.com/cloudflare/cloudflared/releases/latest)
+for the tunnel — grab the binary for your platform (e.g.
+`cloudflared-linux-amd64`), `chmod +x` it, and put it on your `PATH`; no
+account or `sudo` required for the quick-tunnel usage below.
+
+Each time you want to run it, in three separate terminals (all three must
+stay open/running for the whole session):
+
+```
+# 1. the simulation (build once per code change, run every time)
+docker build -f docker/Dockerfile -t asv_exhibition .
+docker run --rm -p 9090:9090 asv_exhibition
+# wait for "Rosbridge WebSocket server started on port 9090" in its logs
+
+# 2. the web server (serves web_ui/, proxies the websocket)
+node web_ui/server.js 8080
+
+# 3. the tunnel
+cloudflared tunnel --url http://localhost:8080
+```
+
+`cloudflared` prints an `https://<random-words>.trycloudflare.com` URL near
+the top of its output — that's what you send to testers. It's tied to that
+one process: if the terminal running it closes or the process restarts,
+you'll get a *new* URL and need to resend it. Quick tunnels also have no
+uptime guarantee (Cloudflare's terms, not a bug) — fine for a demo, not for
+anything that needs to stay up unattended.
+
+To stop everything: `Ctrl+C` in each of the three terminals (Docker first is
+safest, so nothing's left trying to reconnect to it).
+
+Local dev (double-clicking `index.html`, or just `docker run -p 9090:9090`
+without the server/tunnel) is unaffected by any of this.
+
 ## What you'll see
 
 The web UI has three modes:
