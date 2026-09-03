@@ -87,3 +87,10 @@ let lastPublishedAngular = 0.0;
 let lastPublishedLeftThrust = 0.0;
 let lastPublishedRightThrust = 0.0;
 let manualThrustOverrideActive = false; // mirrors what was last sent on manualOverrideTopic
+
+// Mode 2 PS4/gamepad state (input.js's pollGamepad()). false = Cruise (left
+// stick drives the combined-drive scheme, same as arrow keys); true = Twin
+// Thruster (left/right stick each drive one hull's thruster directly, same
+// scheme as W/A/R/D) — toggled by the Circle (◯) button.
+let gamepadThrusterMode = false;
+let gamepadCirclePrev = false; // edge-detects Circle so a held press doesn't toggle every frame

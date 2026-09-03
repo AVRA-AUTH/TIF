@@ -266,6 +266,7 @@ if (mode2Btn) {
     mode2Btn.addEventListener('click', () => {
         if (activeAppMode === 2) stopThrusters();
         activeAppMode = 2;
+        gamepadThrusterMode = false; // always re-enter Mode 2 in Cruise, same "start clean" rule every mode switch already follows
         resetBoatToPose(MODE2_START);
         clearMode1Design();
         localStorage.setItem(ACTIVE_MODE_STORAGE_KEY, '2');
@@ -383,6 +384,7 @@ bindThruster(document.getElementById('btn-right'), 'right');
 // behavior as Mode 1's btn-reset and Mode 3's btn-reset-dock.
 function stopAndResetMode2() {
     stopThrusters();
+    gamepadThrusterMode = false;
     resetBoatToPose(MODE2_START);
 }
 
@@ -414,12 +416,65 @@ window.addEventListener('keyup', (e) => {
 // to release it from the keyboard.
 window.addEventListener('blur', stopThrusters);
 
+// ================= PS4 / GAMEPAD CONTROL (Mode 2 only) =================
+// Uses the browser's Gamepad API directly — a controller connected to this
+// machine (USB or Bluetooth-paired to the OS) shows up here with no Docker/
+// container involvement at all, unlike the README's "physical joystick"
+// caveat (that's about a joystick recognized inside the container via a ROS
+// `joy` node, a separate and much more involved path we don't need here
+// since Mode 2 already does all its driving client-side in JS).
+const GAMEPAD_DEADZONE = 0.15; // ignore stick drift/noise near center
+
+function applyDeadzone(v) {
+    return Math.abs(v) < GAMEPAD_DEADZONE ? 0 : v;
+}
+
+// First connected gamepad, or null. Good enough for a single-controller
+// exhibit booth — doesn't try to track/prefer a specific one.
+function getActiveGamepad() {
+    const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+    for (const gp of pads) {
+        if (gp) return gp;
+    }
+    return null;
+}
+
+// Kept deliberately short (fits 1-2 lines at the sidebar's 250px width,
+// unlike an earlier longer-sentence version that pushed the Boat Speed
+// controls below the fold) — this panel is read on a kiosk touchscreen at a
+// public exhibit, so it can't rely on a hover tooltip a finger can't
+// trigger, and each mode's mapping (Left Stick drives / L-R Stick = L/R
+// thruster) is stated right in the live status line itself.
+function updateGamepadStatusUI(gp) {
+    const el = document.getElementById('gamepad-status');
+    if (!el) return;
+    if (!gp) {
+        el.textContent = '🎮 Connect a PS4 controller to drive';
+        return;
+    }
+    el.textContent = gamepadThrusterMode
+        ? '🎮 ⚙️ Twin Thruster — L/R Stick = L/R thruster · ◯ = Cruise'
+        : '🎮 🚤 Cruise — Left Stick drives · ◯ = Twin Thruster';
+}
+
 function thrusterLoop() {
     const now = performance.now();
     const dt = Math.min((now - lastThrusterTime) / 1000, 0.1); // clamp so a stalled tab doesn't jump velocity
     lastThrusterTime = now;
 
-    if (activeAppMode === 2 && heldThrusterKeys.size > 0) {
+    const gp = activeAppMode === 2 ? getActiveGamepad() : null;
+    if (activeAppMode === 2) updateGamepadStatusUI(gp);
+    if (gp) {
+        // Circle (◯) toggles Cruise <-> Twin Thruster — standard Gamepad API
+        // mapping puts it at buttons[1] regardless of the OS's button icons.
+        const circlePressed = !!(gp.buttons[1] && gp.buttons[1].pressed);
+        if (circlePressed && !gamepadCirclePrev) gamepadThrusterMode = !gamepadThrusterMode;
+        gamepadCirclePrev = circlePressed;
+    }
+    const gamepadDrivingThrusters = !!gp && gamepadThrusterMode;
+    const gamepadDrivingCruise = !!gp && !gamepadThrusterMode;
+
+    if (activeAppMode === 2 && (heldThrusterKeys.size > 0 || gamepadDrivingThrusters)) {
         // Independent per-thruster control takes priority over the combined
         // arrow-key drive whenever any W/A/R/D is held, so the two schemes
         // never both publish to the same thrust topics in the same frame.
@@ -452,6 +507,21 @@ function thrusterLoop() {
             : heldThrusterKeys.has('leftRev') ? THRUSTER_MIN_REV_N * revThrustScale : 0.0;
         let rightThrust = heldThrusterKeys.has('rightFwd') ? THRUSTER_MAX_FWD_N * fwdThrustScale
             : heldThrusterKeys.has('rightRev') ? THRUSTER_MIN_REV_N * revThrustScale : 0.0;
+
+        // Gamepad Twin Thruster mode: each stick's Y-axis drives one hull's
+        // thruster directly, analog in both directions (unlike W/A/R/D,
+        // which is on/off) — push up for forward, down for reverse, with the
+        // same boundary/speed-preset scale (fwdThrustScale/revThrustScale)
+        // the digital scheme uses. Overrides the digital leftThrust/
+        // rightThrust above rather than combining with them, so a stray
+        // WASD press doesn't fight the stick.
+        if (gamepadDrivingThrusters) {
+            const axisToThrust = (axis) => axis >= 0
+                ? axis * THRUSTER_MAX_FWD_N * fwdThrustScale
+                : axis * Math.abs(THRUSTER_MIN_REV_N) * revThrustScale;
+            leftThrust = axisToThrust(-applyDeadzone(gp.axes[1]));  // stick up = negative axis = forward
+            rightThrust = axisToThrust(-applyDeadzone(gp.axes[3]));
+        }
 
         // Hull already touching a solid boundary — kill thrust on whichever
         // thruster(s) are pushing deeper into it (like running aground into
@@ -486,7 +556,7 @@ function thrusterLoop() {
                 teleStatusEl.textContent = '🚧 Hull Contact — Reverse to Clear';
                 teleStatusEl.style.color = '#ff8800';
             } else {
-                teleStatusEl.textContent = '🎛️ Independent Thruster Control';
+                teleStatusEl.textContent = '⚙️ Twin Thruster Mode';
                 teleStatusEl.style.color = '#ff66cc';
             }
         }
@@ -535,7 +605,7 @@ function thrusterLoop() {
         // MAX_LINEAR_FWD/REV themselves come from, in reverse, to find the
         // velocity that actually draws that fraction of max combined
         // thrust, so both schemes now agree.
-        const targetLinear = heldAxes.has('fwd') ? boundaryCappedSpeed(1, speedForThrust(THRUSTER_MAX_FWD_N * 2 * boatSpeedMultiplier))
+        let targetLinear = heldAxes.has('fwd') ? boundaryCappedSpeed(1, speedForThrust(THRUSTER_MAX_FWD_N * 2 * boatSpeedMultiplier))
             : heldAxes.has('rev') ? -boundaryCappedSpeed(-1, speedForThrust(Math.abs(THRUSTER_MIN_REV_N) * 2 * boatSpeedMultiplier))
                 : 0.0;
         // EXPERIMENT (still active): turn demand uncapped (was MAX_ANGULAR =
@@ -550,7 +620,21 @@ function thrusterLoop() {
         // past that so the real spin rate, not this number, is what
         // determines the outcome. Revert to MAX_ANGULAR once you've seen
         // the result.
-        const targetAngular = heldAxes.has('left') ? 15.0 : heldAxes.has('right') ? -15.0 : 0.0;
+        let targetAngular = heldAxes.has('left') ? 15.0 : heldAxes.has('right') ? -15.0 : 0.0;
+
+        // Gamepad Cruise mode: left stick is analog and proportional (a
+        // light push creeps, a full push hits the same cap the keyboard's
+        // on/off arrow keys land on) instead of the keyboard's fixed target
+        // — same combined-drive scheme, just smoother. Overrides the
+        // keyboard's digital target above rather than combining with it.
+        if (gamepadDrivingCruise) {
+            const fwdAxis = -applyDeadzone(gp.axes[1]);  // stick up = negative axis = forward
+            const turnAxis = -applyDeadzone(gp.axes[0]); // stick left = negative axis = turn left (positive angular)
+            targetLinear = fwdAxis >= 0
+                ? fwdAxis * boundaryCappedSpeed(1, speedForThrust(THRUSTER_MAX_FWD_N * 2 * boatSpeedMultiplier))
+                : fwdAxis * boundaryCappedSpeed(-1, speedForThrust(Math.abs(THRUSTER_MIN_REV_N) * 2 * boatSpeedMultiplier));
+            targetAngular = turnAxis * 15.0;
+        }
 
         // Ramp UP toward a held throttle position (eases the lever open over
         // THRUST_RAMP_RATE), but cut instantly to 0 on release instead of
@@ -606,7 +690,7 @@ function thrusterLoop() {
                 teleStatusEl.textContent = '⚓ Idle (Manual Mode)';
                 teleStatusEl.style.color = '#ffc107';
             } else {
-                teleStatusEl.textContent = '🕹️ Manual Drive';
+                teleStatusEl.textContent = '🚤 Cruise Mode';
                 teleStatusEl.style.color = '#00ffcc';
             }
         }
