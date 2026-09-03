@@ -374,8 +374,18 @@
         <fluid_density>1000</fluid_density>
         <propeller_diameter>0.06</propeller_diameter>
         <velocity_control>true</velocity_control>
-        <max_thrust_cmd>51.5</max_thrust_cmd>
-        <min_thrust_cmd>-40.2</min_thrust_cmd>
+        <!-- Real ceiling is 51.5/-40.2 (see the derivation above) — raised
+             3x here ONLY to give web_ui/js Mode 2's "FLASH (300%)" preset
+             real headroom to command past the real T200's rating (a
+             deliberately unrealistic option for a kids' exhibit demo, gated
+             behind cmd_vel_thrust_mixer.py's flash_boost topic so every
+             other preset and every autonomous nav run in Mode 1/3 still
+             clamps at the real 51.5/-40.2 exactly as before). This plugin
+             enforces the outer limit regardless of source, so Flash needs
+             room here even though W/A/R/D's raw thrust-topic path bypasses
+             the mixer entirely. -->
+        <max_thrust_cmd>154.5</max_thrust_cmd>
+        <min_thrust_cmd>-120.6</min_thrust_cmd>
         <topic>thrusters/left/thrust</topic>
       </plugin>
       <plugin filename="gz-sim-thruster-system" name="gz::sim::systems::Thruster">
@@ -384,8 +394,9 @@
         <fluid_density>1000</fluid_density>
         <propeller_diameter>0.06</propeller_diameter>
         <velocity_control>true</velocity_control>
-        <max_thrust_cmd>51.5</max_thrust_cmd>
-        <min_thrust_cmd>-40.2</min_thrust_cmd>
+        <!-- Mirrors the port thruster above — same 3x Flash-mode headroom, same reasoning. -->
+        <max_thrust_cmd>154.5</max_thrust_cmd>
+        <min_thrust_cmd>-120.6</min_thrust_cmd>
         <topic>thrusters/right/thrust</topic>
       </plugin>
 

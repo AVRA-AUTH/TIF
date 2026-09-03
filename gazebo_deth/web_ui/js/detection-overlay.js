@@ -99,6 +99,49 @@ function drawDetectionBox(coreMeshes, labelText) {
     ctx.fillText(labelText, minX + 4, minY - 5);
 }
 
+// Mode 1's gamepad cursor (input.js's thrusterLoop), projected onto the
+// boat's own camera view too — the crosshair on the 2D map (render-2d.js's
+// renderGamepadCursor2D) only helps a kid looking at THAT panel; someone
+// watching the camera feed instead needs the same aim point shown there.
+// Placing itself already works from this view regardless (Square/Triangle/
+// Circle call placeMode1EntityAt(gamepadCursor.x, gamepadCursor.y)
+// unconditionally, same as the mouse's raycast click handler on this same
+// canvas resolves TO) — this only adds the missing visual feedback for it.
+// Reuses `detectionForward` as already set by drawDetectionOverlay() this
+// same frame (see main.js's draw() call order) rather than recomputing it.
+function renderGamepadCursorDetection() {
+    if (typeof gamepadCursor === 'undefined' || !gamepadCursor.active || activeAppMode !== 1) return;
+
+    const worldPoint = new THREE.Vector3(gamepadCursor.x, 0, -gamepadCursor.y); // y=0 water plane, matches the mouse raycast's own waterPlane
+    const toCursor = worldPoint.clone().sub(camera.position);
+    if (toCursor.dot(detectionForward) <= 0) return; // behind the camera — nothing to draw
+
+    const p = projectToOverlay(worldPoint);
+    if (p.x < -20 || p.x > detectionOverlayCanvas.width + 20 || p.y < -20 || p.y > detectionOverlayCanvas.height + 20) return; // well outside the frame
+
+    const ctx = detectionOverlayCtx;
+    // Always yellow here (unlike the 2D map's tool-tinted crosshair,
+    // render-2d.js) — this view's sky/water/scenery background makes the
+    // other tool colors (teal boat, green goal) harder to pick out at a
+    // glance; plain high-contrast yellow reads clearly against all of them,
+    // and matches the perspective-selection frame's own gold tint.
+    const color = '#ffd700';
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(p.x - 14, p.y); ctx.lineTo(p.x - 5, p.y);
+    ctx.moveTo(p.x + 5, p.y); ctx.lineTo(p.x + 14, p.y);
+    ctx.moveTo(p.x, p.y - 14); ctx.lineTo(p.x, p.y - 5);
+    ctx.moveTo(p.x, p.y + 5); ctx.lineTo(p.x, p.y + 14);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 4, 0, 2 * Math.PI);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.restore();
+}
+
 function drawDetectionOverlay() {
     // Note: no clearRect here — the caller already refreshed the whole
     // canvas via drawImage(renderer.domElement, ...) just before this runs.

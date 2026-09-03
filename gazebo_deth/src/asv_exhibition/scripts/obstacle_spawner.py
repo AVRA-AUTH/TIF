@@ -7,10 +7,14 @@ import json
 import math
 import subprocess
 
-# Harbor Fairway Entrance — the one "known safe" pose every mode/reset in the
-# web UI converges on (matches DOCK_ENTRANCE_X/Y in web_ui/app.js). Resetting
-# to gazebo world origin (0,0) used to drop the boat right on the island,
-# which sits at that same origin.
+# Harbor Fairway Entrance — Mode 3's own start pose (matches MODE3_START /
+# DOCK_ENTRANCE_X/Y in web_ui/js/config.js). Used below ONLY as the default
+# for an explicit 'set_pose' request that omits x/y/yaw — NOT as a general
+# "reset" position; every mode now has its own real start pose
+# (MODE1_START/MODE2_START/MODE3_START), and the web UI's own
+# resetBoatToPose() (web_ui/js/lifecycle.js) already sends the correct one
+# via its own 'set_pose' message before ever publishing a bare 'reset' — see
+# that handler below for why it must NOT also reposition the boat itself.
 HARBOR_X = -88.0
 HARBOR_Y = -38.0
 HARBOR_YAW = -1.57
@@ -49,11 +53,23 @@ class ObstacleSpawner(Node):
             data = json.loads(msg.data)
             obs_type = data.get('type')
             
-            # Handle Reset / Level Clear
+            # Handle Reset / Level Clear — obstacles only. The boat's pose is
+            # deliberately NOT touched here: web_ui/js/input.js's btn-reset
+            # handler (the only publisher of a bare 'reset') already calls
+            # resetBoatToPose(MODE1_START) — which sends its own correct
+            # 'set_pose' message — immediately before publishing this. This
+            # used to ALSO reposition the boat, unconditionally, to the
+            # Harbor Fairway Entrance (Mode 3's own start pose, not Mode 1's)
+            # — a leftover from before per-mode start poses existed. Since
+            # both messages arrive here in quick succession, that second,
+            # wrong teleport almost always landed AFTER the correct one and
+            # silently overrode it: the boat looked like it reset correctly
+            # for a moment, then "moved on its own" back to the harbor once
+            # the next /odom update reported its real (overridden) pose.
             if obs_type == 'reset':
-                self.get_logger().info("🧹 Reset command received! Clearing all Gazebo obstacles & resetting boat pose...")
-                
-                # 1. Remove all spawned obstacles from Gazebo world
+                self.get_logger().info("🧹 Reset command received! Clearing all Gazebo obstacles...")
+
+                # Remove all spawned obstacles from Gazebo world
                 for obs_id in list(self.spawned_ids):
                     cmd = [
                         'gz', 'service',
@@ -66,9 +82,25 @@ class ObstacleSpawner(Node):
                     subprocess.Popen(cmd)
 
                 self.spawned_ids.clear()
+                return
 
-                # 2. Reset boat pose back to the Harbor Fairway Entrance in Gazebo
-                self._set_boat_pose(HARBOR_X, HARBOR_Y, HARBOR_YAW)
+            # Remove one previously-spawned obstacle by id — Mode 1's
+            # Remove tool / gamepad L1 (web_ui/js/input.js's
+            # removeMode1EntityAt()), the single-entity counterpart to the
+            # 'reset' branch's remove-everything loop above.
+            if obs_type == 'remove':
+                obs_id = data.get('id')
+                if obs_id in self.spawned_ids:
+                    cmd = [
+                        'gz', 'service',
+                        '-s', '/world/exhibition_water_world/remove',
+                        '--reqtype', 'gz.msgs.Entity',
+                        '--reptype', 'gz.msgs.Boolean',
+                        '--timeout', '1000',
+                        '--req', f'name: "{obs_id}" type: MODEL'
+                    ]
+                    subprocess.Popen(cmd)
+                    self.spawned_ids.discard(obs_id)
                 return
 
             # Reposition the boat only — used when the web UI switches modes

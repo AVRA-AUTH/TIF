@@ -18,6 +18,82 @@ let hoveredBerth = null;
 // KP_LINEAR clamp), so "fast" had zero effect beyond medium.
 let boatSpeedMultiplier = 0.6;
 
+// ================= CUSTOM POPUP (replaces window.alert()/confirm()) =================
+// A blocking window.alert()/confirm() can't be acted on by a gamepad at all
+// — no gamepad input reaches a native browser dialog, and it pauses ALL page
+// JS (including thrusterLoop's requestAnimationFrame loop below) while open,
+// so a gamepad's own polling loop can't even run to detect a button press.
+// This non-blocking overlay replaces every alert()/confirm() call in the app
+// (this file, docking.js, navigation.js) so a connected controller can act
+// on it with Cross (✕ = OK) / Circle (◯ = Cancel) — wired up in thrusterLoop
+// below — exactly like clicking the on-screen buttons or pressing
+// Enter/Escape.
+const customAlertOverlay = document.getElementById('custom-alert-overlay');
+const customAlertMessageEl = document.getElementById('custom-alert-message');
+const customAlertIconEl = document.getElementById('custom-alert-icon');
+const customAlertCancelBtn = document.getElementById('custom-alert-cancel');
+let customPopupOnConfirm = null; // set only for a showConfirm() — null means "plain alert, nothing to run on OK"
+
+function isCustomAlertVisible() {
+    return !!customAlertOverlay && customAlertOverlay.style.display !== 'none';
+}
+
+// A single OK button, no real choice — same as window.alert(). `icon` is a
+// single emoji shown as the popup's big badge — pass one fitting the
+// message's actual cause (🌲 island, ⛔ occupied, ...) instead of the
+// generic default, and leave any emoji already inline in `message` itself
+// out of it (the badge is doing that job now, so it isn't duplicated).
+function showAlert(message, icon = '⚠️') {
+    showPopup(message, null, icon);
+}
+
+// OK/Cancel — same as window.confirm(), but onConfirm only runs if OK/Cross
+// is chosen (there's no "wantsReset" boolean to check afterward the way
+// confirm()'s return value worked, since this can't block for one — callers
+// pass what should happen on confirm directly).
+function showConfirm(message, onConfirm, icon = '⚠️') {
+    showPopup(message, onConfirm, icon);
+}
+
+function showPopup(message, onConfirm, icon) {
+    if (!customAlertOverlay || !customAlertMessageEl) { // defensive fallback, should never hit
+        if (onConfirm) { if (confirm(message)) onConfirm(); } else alert(message);
+        return;
+    }
+    customAlertMessageEl.textContent = message;
+    if (customAlertIconEl) customAlertIconEl.textContent = icon;
+    if (customAlertCancelBtn) customAlertCancelBtn.style.display = onConfirm ? 'inline-flex' : 'none';
+    customPopupOnConfirm = onConfirm;
+    customAlertOverlay.style.display = 'flex';
+}
+
+function hideCustomAlert() {
+    if (customAlertOverlay) customAlertOverlay.style.display = 'none';
+}
+
+// OK / Cross — runs the pending confirm callback, if this was a showConfirm().
+function confirmCustomPopup() {
+    const cb = customPopupOnConfirm;
+    hideCustomAlert();
+    if (cb) cb();
+}
+
+// Cancel / Circle / Escape — always just closes, callback never runs.
+function cancelCustomPopup() {
+    hideCustomAlert();
+}
+
+document.getElementById('custom-alert-ok')?.addEventListener('click', confirmCustomPopup);
+customAlertCancelBtn?.addEventListener('click', cancelCustomPopup);
+customAlertOverlay?.addEventListener('click', (e) => {
+    if (e.target === customAlertOverlay) cancelCustomPopup(); // backdrop click, not the box itself
+});
+window.addEventListener('keydown', (e) => {
+    if (!isCustomAlertVisible()) return;
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); confirmCustomPopup(); }
+    else if (e.key === 'Escape') { e.preventDefault(); cancelCustomPopup(); }
+});
+
 canvas.addEventListener('mousemove', (e) => {
     if (activeAppMode !== 3) { hoveredBerth = null; return; }
     const rect = canvas.getBoundingClientRect();
@@ -34,21 +110,47 @@ canvas.addEventListener('mousemove', (e) => {
 });
 
 
-document.getElementById('speed-slow')?.addEventListener('click', () => {
-    boatSpeedMultiplier = 0.4;
-    document.querySelectorAll('#mode2-tools .dbtn').forEach(b => b.classList.remove('active'));
-    document.getElementById('speed-slow').classList.add('active');
+// Only sends flashBoostTopic on an actual change (mirrors the
+// manualThrustOverrideActive/turnReserveTopic pattern in ros.js/lifecycle.js
+// — publish on transition, not every call) — cmd_vel_thrust_mixer.py swaps
+// its real 51.5N/-40.2N ceiling for the unrealistic 154.5N/-120.6N one while
+// this is true (see exhibition_water.sdf's matching Thruster plugin
+// headroom). Only the combined-drive (cmd_vel) scheme needs this; W/A/R/D's
+// raw thrust-topic path bypasses the mixer and gets the same headroom
+// straight from the SDF regardless of this flag.
+function setFlashBoost(active) {
+    if (flashBoostActive === active) return;
+    flashBoostActive = active;
+    flashBoostTopic.publish(new ROSLIB.Message({ data: active }));
+}
+
+// Ordered slowest -> fastest so the gamepad D-Pad (thrusterLoop) can cycle
+// through them by index — the mouse buttons below all reuse this same list
+// rather than duplicating the multiplier/id pairs.
+const SPEED_PRESETS = [
+    { id: 'speed-slow', mult: 0.4 },
+    { id: 'speed-medium', mult: 0.6 },
+    { id: 'speed-fast', mult: 1.0 },
+    { id: 'speed-flash', mult: 3.0 }, // intentionally unrealistic — see setFlashBoost()
+];
+
+SPEED_PRESETS.forEach(preset => {
+    document.getElementById(preset.id)?.addEventListener('click', () => {
+        boatSpeedMultiplier = preset.mult;
+        document.querySelectorAll('#mode2-tools .dbtn').forEach(b => b.classList.remove('active'));
+        document.getElementById(preset.id).classList.add('active');
+        setFlashBoost(preset.id === 'speed-flash');
+    });
 });
-document.getElementById('speed-medium')?.addEventListener('click', () => {
-    boatSpeedMultiplier = 0.6;
-    document.querySelectorAll('#mode2-tools .dbtn').forEach(b => b.classList.remove('active'));
-    document.getElementById('speed-medium').classList.add('active');
-});
-document.getElementById('speed-fast')?.addEventListener('click', () => {
-    boatSpeedMultiplier = 1.0;
-    document.querySelectorAll('#mode2-tools .dbtn').forEach(b => b.classList.remove('active'));
-    document.getElementById('speed-fast').classList.add('active');
-});
+
+// Gamepad D-Pad Left/Right (thrusterLoop) — steps one preset at a time
+// rather than wrapping, so Left at Slow (or Right at Flash) is a no-op
+// instead of jumping straight from one extreme to the other.
+function cycleSpeedPreset(direction) {
+    const currentIndex = SPEED_PRESETS.findIndex(p => p.mult === boatSpeedMultiplier);
+    const nextIndex = Math.max(0, Math.min(SPEED_PRESETS.length - 1, (currentIndex === -1 ? 1 : currentIndex) + direction));
+    document.getElementById(SPEED_PRESETS[nextIndex].id)?.click();
+}
 
 // UI Interactions
 document.querySelectorAll('.tool-btn').forEach(btn => {
@@ -75,12 +177,16 @@ function placeMode1EntityAt(rx, ry) {
         ry = (ry / distFromOrigin) * (330.0 * WORLD_SCALE);
     }
 
-    // Keep clear of Central Island (r >= 33.0m from island center)
+    // Reject placement on/near the Central Island outright (r < 33.0m from
+    // island center) instead of silently sliding it to the nearest open-
+    // water edge — that used to place something at a spot the player never
+    // actually pointed at, which read as confusing/broken rather than
+    // deliberate (worse for a kid using the gamepad cursor, where the
+    // crosshair itself sits right over the island when this fires).
     const distFromIsland = Math.hypot(rx - ISLAND_X, ry - ISLAND_Y);
-    if (distFromIsland < 33.0) {
-        const angle = Math.atan2(ry - ISLAND_Y, rx - ISLAND_X);
-        rx = ISLAND_X + Math.cos(angle) * 33.0;
-        ry = ISLAND_Y + Math.sin(angle) * 33.0;
+    if (distFromIsland < ISLAND_KEEP_OUT) {
+        showAlert('Too close to the island — pick a spot in open water.', '🌲');
+        return;
     }
 
     if (currentMode === 'goal') {
@@ -88,13 +194,27 @@ function placeMode1EntityAt(rx, ry) {
         currentGoal = { type: 'goal', ros_x: rx, ros_y: ry, id: 'goal_node' };
         entities.push(currentGoal);
     } else {
+        // Cap player-placed buoys/moving boats (MAX_BUOYS/MAX_MOVING_BOATS,
+        // config.js) — excludes the baked-in moored marina boats
+        // (isParkedShip), which aren't player-placed. Checked here, ahead of
+        // the hull-collision check below, so both the mouse-click and
+        // gamepad placement paths (both funnel through this one function)
+        // get the same limit for free.
+        const maxForType = currentMode === 'dynamic' ? MAX_MOVING_BOATS : MAX_BUOYS;
+        const countOfType = entities.filter(ent => ent.type === currentMode && !ent.isParkedShip).length;
+        if (countOfType >= maxForType) {
+            const label = currentMode === 'dynamic' ? 'moving boats' : 'buoys';
+            showAlert(`Max ${maxForType} ${label} reached — remove one before adding more.`, '🚧');
+            return;
+        }
+
         // Reject a spawn point that would already be touching the boat's
         // own hull at its current (stationary, design-phase) pose — see
         // wouldObstaclePlacementCollideWithBoat() for why this matters now
         // that hull-touch detection is hull-box-aware instead of a flat
         // center-to-center radius.
         if (wouldObstaclePlacementCollideWithBoat(rx, ry, currentMode)) {
-            alert('⚠️ Too close to your boat — pick a spot further away.');
+            showAlert('Too close to your boat — pick a spot further away.', '🚤');
             return;
         }
 
@@ -116,30 +236,59 @@ function placeMode1EntityAt(rx, ry) {
     }
 }
 
+// Only way to get back under MAX_BUOYS/MAX_MOVING_BOATS once you've hit the
+// cap — the Reset button clears everything, this clears just one. Removes
+// whichever player-placed buoy/moving-boat is nearest (rx, ry), goal and the
+// baked-in moored marina boats excluded, if anything is within snap range.
+// Silently no-ops otherwise (Design Level tool is trial-and-error by
+// nature — a miss isn't an error worth an alert). Removes the real Gazebo
+// model too via a 'remove' spawn message (obstacle_spawner.py), the
+// single-entity counterpart to Reset's remove-everything 'reset' message.
+// Wider than a placement snap radius on purpose — a moving boat entity
+// drifts (updateDynamicEntities(), navigation.js), so by the time a press
+// registers it may no longer be exactly where it looked when aimed at;
+// generous range keeps that from reading as "removal doesn't work."
+const REMOVE_SNAP_RADIUS = 12.0;
+
+function removeMode1EntityAt(rx, ry) {
+    let closest = null;
+    let closestDist = REMOVE_SNAP_RADIUS;
+    entities.forEach(ent => {
+        if (ent.isParkedShip || (ent.type !== 'static' && ent.type !== 'dynamic')) return;
+        const d = Math.hypot(ent.ros_x - rx, ent.ros_y - ry);
+        if (d < closestDist) { closestDist = d; closest = ent; }
+    });
+    if (!closest) return;
+
+    entities = entities.filter(ent => ent !== closest);
+    const mesh = threeEntities.get(closest.id);
+    if (mesh) {
+        scene.remove(mesh);
+        threeEntities.delete(closest.id);
+    }
+
+    spawnTopic.publish(new ROSLIB.Message({
+        data: JSON.stringify({ type: 'remove', id: closest.id })
+    }));
+}
+
 canvas.addEventListener('click', (e) => {
     const rect = canvas.getBoundingClientRect();
     const cx = e.clientX - rect.left;
     const cy = e.clientY - rect.top;
     let { rx, ry } = canvasToRos(cx, cy);
 
-    // In Mode 3, click near any pier edge to calculate dynamic autonomous parking
+    // In Mode 3, click near any pier edge to calculate dynamic autonomous
+    // parking — attemptDockAt() (docking.js) does the actual detection/
+    // validation/kickoff, shared with the gamepad's Cross-press (thrusterLoop).
     if (activeAppMode === 3) {
-        const dockTypeSel = document.getElementById('dock-type-selector');
-        const isParallel = dockTypeSel ? (dockTypeSel.value === 'parallel') : true;
-
-        // Berth detection/validation moved to docking.js's detectBerthAtClick()
-        // (same logic, same alert() messages on an invalid/occupied/blocked
-        // spot — it returns null in those cases instead of returning here).
-        const bestBerth = detectBerthAtClick(rx, ry, isParallel);
-        if (!bestBerth) return;
-
-        // Start Dynamic Docking Sequence!
-        startDynamicDocking(bestBerth);
+        attemptDockAt(rx, ry);
         return;
     }
 
     if (activeAppMode !== 1 || !currentMode) return;
-    placeMode1EntityAt(rx, ry);
+    if (currentMode === 'remove') removeMode1EntityAt(rx, ry);
+    else placeMode1EntityAt(rx, ry);
 });
 
 // Place obstacles/goal directly in the 3D Object Detection camera view, same
@@ -171,13 +320,14 @@ detectionOverlayCanvas.addEventListener('click', (e) => {
     const hit = new THREE.Vector3();
     if (!raycaster.ray.intersectPlane(waterPlane, hit)) return; // camera looking away from the water plane
 
-    placeMode1EntityAt(hit.x, -hit.z);
+    if (currentMode === 'remove') removeMode1EntityAt(hit.x, -hit.z);
+    else placeMode1EntityAt(hit.x, -hit.z);
 });
 
 // ▶️ RUN ASV DEMO Button
 document.getElementById('btn-run').addEventListener('click', () => {
     if (!currentGoal) {
-        alert("Please set a Target Goal (🏁) first before running!");
+        showAlert("Please set a Target Goal first before running!", '🏁');
         return;
     }
 
@@ -208,7 +358,22 @@ document.getElementById('btn-run').addEventListener('click', () => {
     goalTopic.publish(goalMsg);
 });
 
+// Debounces rapid repeated Reset presses (mashing the mouse button, or
+// Options on the gamepad) — each press fires its own async 'set_pose'/
+// 'reset' calls to Gazebo (subprocess.Popen in obstacle_spawner.py, no
+// queueing), and resetBoatToPose()'s ignoreOdomUntil window is exactly what
+// stops a stale pre-reset /odom reading from clobbering the fresh pose in
+// the meantime — pressing Reset again WITHIN that window doesn't reset any
+// faster, it just fires a second overlapping teleport that can land after
+// the first one's ignoreOdomUntil has already expired, and briefly show
+// wherever THAT second one hasn't finished landing yet. Matches
+// resetBoatToPose's own 1000ms window exactly, so a new Reset is only ever
+// accepted once the previous one has fully settled.
+let lastMode1ResetAt = 0;
 document.getElementById('btn-reset').addEventListener('click', () => {
+    if (Date.now() - lastMode1ResetAt < 1000) return;
+    lastMode1ResetAt = Date.now();
+
     // 1. Halt nav/docking, snap boat back to Mode 1's own start pose (this
     // button only exists in mode1-tools — it used to hardcode the marina
     // entrance instead, which only matches Mode 1's actual spawn point by
@@ -249,6 +414,8 @@ if (mode1Btn) {
     mode1Btn.addEventListener('click', () => {
         if (activeAppMode === 2) stopThrusters();
         activeAppMode = 1;
+        gamepadCursor.x = MODE1_START.x + 15; gamepadCursor.y = MODE1_START.y; // same "start clean" rule every mode switch follows; +15 so it doesn't start exactly on the boat (state.js)
+        gamepadPerspective = 'map';
         resetBoatToPose(MODE1_START);
         clearMode1Design();
         localStorage.setItem(ACTIVE_MODE_STORAGE_KEY, '1');
@@ -284,6 +451,7 @@ if (mode3Btn) {
     mode3Btn.addEventListener('click', () => {
         if (activeAppMode === 2) stopThrusters();
         activeAppMode = 3;
+        gamepadCursor.x = MODE3_START.x; gamepadCursor.y = MODE3_START.y; // same "start clean" rule every mode switch follows
         resetBoatToPose(MODE3_START);
         clearMode1Design();
         localStorage.setItem(ACTIVE_MODE_STORAGE_KEY, '3');
@@ -362,6 +530,11 @@ function stopThrusters() {
         manualThrustOverrideActive = false;
         manualOverrideTopic.publish(new ROSLIB.Message({ data: false }));
     }
+    // Same reasoning: Flash Mode's boosted mixer ceiling must never survive
+    // into Mode 1/3's autonomous /cmd_vel nav, which shares this same mixer
+    // — every path that leaves Mode 2 (mode-switch, blur, STOP) routes
+    // through here, so this is the one place that needs to guarantee it off.
+    setFlashBoost(false);
 }
 
 // On-screen D-pad: press-and-hold, matching keyboard behavior
@@ -416,14 +589,86 @@ window.addEventListener('keyup', (e) => {
 // to release it from the keyboard.
 window.addEventListener('blur', stopThrusters);
 
-// ================= PS4 / GAMEPAD CONTROL (Mode 2 only) =================
+// ================= PS4 / GAMEPAD CONTROL (all modes) =================
 // Uses the browser's Gamepad API directly — a controller connected to this
 // machine (USB or Bluetooth-paired to the OS) shows up here with no Docker/
 // container involvement at all, unlike the README's "physical joystick"
 // caveat (that's about a joystick recognized inside the container via a ROS
 // `joy` node, a separate and much more involved path we don't need here
-// since Mode 2 already does all its driving client-side in JS).
+// since every mode already does its driving/UI client-side in JS).
 const GAMEPAD_DEADZONE = 0.15; // ignore stick drift/noise near center
+// Standard Gamepad API mapping — index, not the OS's button icon, so this
+// holds regardless of platform. See https://w3c.github.io/gamepad/#remapping
+const GP_BTN = {
+    CROSS: 0, CIRCLE: 1, SQUARE: 2, TRIANGLE: 3,
+    L1: 4, R1: 5, L2: 6, R2: 7, OPTIONS: 9, R3: 11,
+    DPAD_UP: 12, DPAD_DOWN: 13, DPAD_LEFT: 14, DPAD_RIGHT: 15,
+};
+// Cursor speed in canvas PIXELS/sec (converted to ROS meters via the
+// current view's own scale below) rather than a flat meters/sec figure — so
+// the cursor covers the same visual distance per second in both Mode 1's
+// wide 1.35x view and Mode 3's zoomed-in 3.5x marina view, instead of
+// feeling twitchy-fast once zoomed in (a flat meters/sec figure tuned for
+// Mode 1 would fly across Mode 3's much smaller on-screen area).
+const GAMEPAD_CURSOR_PIXEL_SPEED = 220;
+// Camera perspective doesn't use the pixel/view-scale conversion above at
+// all — that conversion exists to match the 2D map's own orthographic
+// scale, which has no real equivalent for a perspective camera view. A
+// flat, slower ROS m/s figure instead: placing something precisely while
+// watching the camera needs finer control than sweeping the wide-open 2D
+// map does, so this is deliberately well under the map's own effective
+// speed (220px / 1.35 view-scale ≈ 163 m/s at Mode 1's default zoom).
+const GAMEPAD_CURSOR_CAMERA_SPEED = 10; // ROS meters/sec
+const GAMEPAD_CURSOR_MAX_RADIUS = 330.0 * WORLD_SCALE; // matches placeMode1EntityAt's own open-water clamp
+// How far in from each edge of the camera canvas counts as "off-frame" for
+// containment purposes (isRosPointVisibleInCamera below) — matches
+// renderGamepadCursorDetection's own off-screen cutoff, so the cursor never
+// gets clamped to sit right at a point it's already invisible.
+const CAMERA_VIEW_EDGE_MARGIN = 20;
+// How far in front of the boat (ROS meters, along the camera's own flat
+// forward direction) the cursor snaps to when switching TO camera
+// perspective (R3) finds its current spot isn't visible in that view — the
+// boat itself is always dead-center of this camera (main.js's
+// camera.lookAt(boatPos...)), so a modest offset from it reliably lands
+// somewhere both visible and not immediately hull-colliding.
+const GAMEPAD_CAMERA_DEFAULT_DISTANCE = 12;
+// Reusable scratch vectors for the camera-relative cursor movement below —
+// avoids allocating a fresh THREE.Vector3 every frame just to throw it away.
+const gamepadCamForward = new THREE.Vector3();
+const gamepadCamRight = new THREE.Vector3();
+const gamepadCamCheckPoint = new THREE.Vector3();
+const gamepadCamCheckForward = new THREE.Vector3();
+const GAMEPAD_WORLD_UP = new THREE.Vector3(0, 1, 0);
+
+// True if (rx, ry) would currently render somewhere inside the camera
+// view's own frame (not behind the camera, not off either edge) — used to
+// keep the gamepad cursor from wandering somewhere the player can't
+// actually see it while Camera perspective is selected, and to decide
+// whether switching TO that perspective needs to relocate the cursor first
+// (see the R3 handler below). Reuses projectToOverlay() (detection-
+// overlay.js, loads before this file) — the exact same projection the
+// crosshair's own on-screen drawing and the live detection boxes use, so
+// this can never disagree with what's actually visible.
+function isRosPointVisibleInCamera(rx, ry) {
+    gamepadCamCheckPoint.set(rx, 0, -ry); // world Z = -ROS Y, same convention as everywhere else
+    camera.getWorldDirection(gamepadCamCheckForward);
+    const toPoint = gamepadCamCheckPoint.clone().sub(camera.position);
+    if (toPoint.dot(gamepadCamCheckForward) <= 0) return false; // behind the camera
+    const p = projectToOverlay(gamepadCamCheckPoint); // mutates gamepadCamCheckPoint via .project(camera) — fine, it's a scratch var
+    return p.x >= CAMERA_VIEW_EDGE_MARGIN && p.x <= detectionOverlayCanvas.width - CAMERA_VIEW_EDGE_MARGIN &&
+        p.y >= CAMERA_VIEW_EDGE_MARGIN && p.y <= detectionOverlayCanvas.height - CAMERA_VIEW_EDGE_MARGIN;
+}
+
+// Places the cursor a fixed distance ahead of the boat along the camera's
+// own flat forward direction — see GAMEPAD_CAMERA_DEFAULT_DISTANCE above
+// for why this reliably lands somewhere visible.
+function snapCursorToCameraDefault() {
+    camera.getWorldDirection(gamepadCamForward);
+    gamepadCamForward.y = 0;
+    gamepadCamForward.normalize();
+    gamepadCursor.x = boatPos.x + gamepadCamForward.x * GAMEPAD_CAMERA_DEFAULT_DISTANCE;
+    gamepadCursor.y = boatPos.y - gamepadCamForward.z * GAMEPAD_CAMERA_DEFAULT_DISTANCE;
+}
 
 function applyDeadzone(v) {
     return Math.abs(v) < GAMEPAD_DEADZONE ? 0 : v;
@@ -439,22 +684,95 @@ function getActiveGamepad() {
     return null;
 }
 
+// Edge-detects a button press (true only on the frame it goes from up to
+// down) using the shared gamepadButtonPrev map (state.js) — every button
+// gets updated every frame regardless of which mode acts on it, so a button
+// physically held while switching modes doesn't read as a fresh press the
+// instant the new mode starts looking at it.
+function gamepadButtonJustPressed(gp, index) {
+    const pressed = !!(gp.buttons[index] && gp.buttons[index].pressed);
+    const wasPressed = !!gamepadButtonPrev[index];
+    gamepadButtonPrev[index] = pressed;
+    return pressed && !wasPressed;
+}
+
 // Kept deliberately short (fits 1-2 lines at the sidebar's 250px width,
 // unlike an earlier longer-sentence version that pushed the Boat Speed
 // controls below the fold) — this panel is read on a kiosk touchscreen at a
 // public exhibit, so it can't rely on a hover tooltip a finger can't
-// trigger, and each mode's mapping (Left Stick drives / L-R Stick = L/R
-// thruster) is stated right in the live status line itself.
-function updateGamepadStatusUI(gp) {
+// trigger, and each mode's mapping is stated right in the live status line.
+// Terse on purpose — per-button mappings live on the buttons themselves
+// (data-label-gamepad swaps via applyGamepadUiMode()) rather than being
+// spelled out again here too. Only the one thing that's genuinely live
+// state — which of the two driving schemes is active — needs a per-frame
+// update at all.
+function updateGamepadStatusMode2(gp) {
     const el = document.getElementById('gamepad-status');
     if (!el) return;
-    if (!gp) {
-        el.textContent = '🎮 Connect a PS4 controller to drive';
-        return;
-    }
-    el.textContent = gamepadThrusterMode
-        ? '🎮 ⚙️ Twin Thruster — L/R Stick = L/R thruster · ◯ = Cruise'
-        : '🎮 🚤 Cruise — Left Stick drives · ◯ = Twin Thruster';
+    el.textContent = !gp ? '🎮 Connect a controller' : (gamepadThrusterMode ? '🎮 Twin Thruster' : '🎮 Cruise');
+}
+
+// The chip itself is now static markup (index.html swaps "Connect a
+// controller" for "Stick = Cursor" purely via the gamepad-mode CSS class —
+// see applyGamepadUiMode()); this only has to keep the live buoy/moving-boat
+// counts on their own buttons up to date, e.g. "🟡 Buoy (□) 3/10".
+function updateGamepadStatusMode1(gp) {
+    if (!gp) return;
+    const buoyCount = entities.filter(e => e.type === 'static' && !e.isParkedShip).length;
+    const boatCount = entities.filter(e => e.type === 'dynamic').length;
+    const buoyBtn = document.getElementById('btn-static-buoy');
+    const boatBtn = document.getElementById('btn-moving-boat');
+    if (buoyBtn) buoyBtn.textContent = `🟡 Buoy (□) ${buoyCount}/${MAX_BUOYS}`;
+    if (boatBtn) boatBtn.textContent = `🚢 Boat (△) ${boatCount}/${MAX_MOVING_BOATS}`;
+}
+
+// Applies gamepadPerspective (state.js, toggled by R3) as a yellow frame
+// around whichever view panel is currently "live" — only touches the DOM on
+// an actual change, not every frame. `active` is false outside Mode 1 or
+// with no gamepad connected, clearing the frame from both panels.
+let gamepadPerspectiveApplied = undefined; // deliberately not null — null IS a valid "cleared" state, this just forces the very first call through
+function updateGamepadPerspectiveUI(active) {
+    const wanted = active ? gamepadPerspective : null;
+    if (wanted === gamepadPerspectiveApplied) return;
+    gamepadPerspectiveApplied = wanted;
+    document.getElementById('map-view-panel')?.classList.toggle('gamepad-perspective-active', wanted === 'map');
+    document.getElementById('camera-view-panel')?.classList.toggle('gamepad-perspective-active', wanted === 'camera');
+}
+
+// Swaps every button carrying data-label-mouse/data-label-gamepad (Mode 1's
+// tool/Run/Reset buttons, Mode 3's Cancel button) to its controller-icon
+// wording, and toggles body.gamepad-mode — the CSS hook (style.css) that
+// hides mouse/keyboard-only help text once a controller is doing the work.
+// Called only on an actual connect/disconnect transition (thrusterLoop
+// tracks that), not every frame — this rewrites text nodes, which a 60fps
+// loop shouldn't be doing when nothing has changed.
+function applyGamepadUiMode(connected) {
+    document.body.classList.toggle('gamepad-mode', connected);
+    document.querySelectorAll('[data-label-gamepad]').forEach(el => {
+        el.textContent = connected ? el.dataset.labelGamepad : el.dataset.labelMouse;
+    });
+}
+let gamepadWasConnected = false;
+
+// Mode 1's Reset/Run/place-tool buttons all reuse the existing mouse-driven
+// buttons/handlers via .click() rather than duplicating their logic — same
+// approach the mode-restore-on-reload code above already uses
+// (mode2Btn.click()), and it means a gamepad press can never drift out of
+// sync with what a mouse click does.
+function gamepadResetActiveMode() {
+    if (activeAppMode === 1) document.getElementById('btn-reset')?.click();
+    else if (activeAppMode === 2) document.getElementById('btn-stop')?.click();
+    else if (activeAppMode === 3) document.getElementById('btn-reset-dock')?.click();
+}
+
+// L1/R1 (previous/next) cycle between the three modes — same "click the
+// real button" reuse as everything else here, so it goes through the exact
+// same reset/pose/UI logic a mouse click on that mode's tab does. Global
+// (checked every frame regardless of activeAppMode, like Options above),
+// not gated behind gamepadCursor.active or any per-mode block.
+function cycleMode(direction) {
+    const nextMode = ((activeAppMode - 1 + direction + 3) % 3) + 1;
+    document.getElementById(`mode${nextMode}-btn`)?.click();
 }
 
 function thrusterLoop() {
@@ -462,17 +780,177 @@ function thrusterLoop() {
     const dt = Math.min((now - lastThrusterTime) / 1000, 0.1); // clamp so a stalled tab doesn't jump velocity
     lastThrusterTime = now;
 
-    const gp = activeAppMode === 2 ? getActiveGamepad() : null;
-    if (activeAppMode === 2) updateGamepadStatusUI(gp);
-    if (gp) {
-        // Circle (◯) toggles Cruise <-> Twin Thruster — standard Gamepad API
-        // mapping puts it at buttons[1] regardless of the OS's button icons.
-        const circlePressed = !!(gp.buttons[1] && gp.buttons[1].pressed);
-        if (circlePressed && !gamepadCirclePrev) gamepadThrusterMode = !gamepadThrusterMode;
-        gamepadCirclePrev = circlePressed;
+    // A custom alert is showing — treat it as fully modal (matching what a
+    // blocking window.alert() used to do to this entire loop) except for the
+    // gamepad's own Cross-to-dismiss, which needs the loop still running to
+    // ever detect it. Everything below (driving, cursor, placement, D-pad)
+    // is skipped entirely until it's dismissed.
+    if (isCustomAlertVisible()) {
+        const gpForAlert = getActiveGamepad();
+        if (gpForAlert && gamepadButtonJustPressed(gpForAlert, GP_BTN.CROSS)) confirmCustomPopup();
+        else if (gpForAlert && gamepadButtonJustPressed(gpForAlert, GP_BTN.CIRCLE)) cancelCustomPopup();
+        requestAnimationFrame(thrusterLoop);
+        return;
     }
-    const gamepadDrivingThrusters = !!gp && gamepadThrusterMode;
-    const gamepadDrivingCruise = !!gp && !gamepadThrusterMode;
+
+    // Polled every frame regardless of mode: Options (☰) is the one gamepad
+    // button that means the same thing everywhere (STOP & RESET), so its
+    // edge-detection has to keep running even in modes with no other
+    // gamepad handling, or it'll misfire the moment some mode's handling
+    // starts caring about button state again.
+    const gp = getActiveGamepad();
+    if (!!gp !== gamepadWasConnected) { applyGamepadUiMode(!!gp); gamepadWasConnected = !!gp; }
+    if (gp && gamepadButtonJustPressed(gp, GP_BTN.OPTIONS)) gamepadResetActiveMode();
+    // L1/R1 switch modes — also global, also unconditional on activeAppMode.
+    if (gp && gamepadButtonJustPressed(gp, GP_BTN.L1)) cycleMode(-1);
+    if (gp && gamepadButtonJustPressed(gp, GP_BTN.R1)) cycleMode(1);
+
+    if (activeAppMode === 2) {
+        updateGamepadStatusMode2(gp);
+        // Circle (◯) toggles Cruise <-> Twin Thruster.
+        if (gp && gamepadButtonJustPressed(gp, GP_BTN.CIRCLE)) gamepadThrusterMode = !gamepadThrusterMode;
+        // D-Pad Left/Right cycles the Boat Speed presets (Slow..Flash) —
+        // reuses the same buttons a mouse click would use, see cycleSpeedPreset().
+        if (gp && gamepadButtonJustPressed(gp, GP_BTN.DPAD_LEFT)) cycleSpeedPreset(-1);
+        if (gp && gamepadButtonJustPressed(gp, GP_BTN.DPAD_RIGHT)) cycleSpeedPreset(1);
+    } else if (activeAppMode === 1) {
+        updateGamepadStatusMode1(gp);
+    }
+    updateGamepadPerspectiveUI(activeAppMode === 1 && !!gp);
+    const gamepadDrivingThrusters = activeAppMode === 2 && !!gp && gamepadThrusterMode;
+    const gamepadDrivingCruise = activeAppMode === 2 && !!gp && !gamepadThrusterMode;
+
+    // ---- Mode 1 & Mode 3: shared gamepad cursor (left stick) ----
+    // Pixel-speed converted via the CURRENT view's scale (render-2d.js) so
+    // it covers the same on-screen distance per second in both Mode 1's wide
+    // view and Mode 3's zoomed-in marina view.
+    gamepadCursor.active = (activeAppMode === 1 || activeAppMode === 3) && !!gp;
+    if (gamepadCursor.active) {
+        const moveRight = applyDeadzone(gp.axes[0]);    // stick right = positive
+        const moveForward = -applyDeadzone(gp.axes[1]); // stick up (negative axis) = positive "forward"
+        const inCameraPerspective = activeAppMode === 1 && gamepadPerspective === 'camera';
+
+        if (inCameraPerspective) {
+            // Camera perspective selected (R3, gamepadPerspective): "left"
+            // on the stick means the camera's own screen-left, not map-west
+            // — matches what the player is actually looking at instead of
+            // needing to mentally translate map-north into whichever way
+            // the boat's camera currently happens to be facing. The
+            // crosshair itself still shows on BOTH panels either way
+            // (renderGamepadCursor2D()/renderGamepadCursorDetection()) —
+            // only the STICK's meaning changes with the selected view, not
+            // where the resulting shared cursor is drawn. Deliberately
+            // slower than map movement (GAMEPAD_CURSOR_CAMERA_SPEED) —
+            // precise placement while watching this view needs finer
+            // control than sweeping the wide-open map does.
+            camera.getWorldDirection(gamepadCamForward);
+            gamepadCamForward.y = 0;
+            gamepadCamForward.normalize();
+            gamepadCamRight.crossVectors(gamepadCamForward, GAMEPAD_WORLD_UP).normalize();
+            const worldDX = gamepadCamForward.x * moveForward + gamepadCamRight.x * moveRight;
+            const worldDZ = gamepadCamForward.z * moveForward + gamepadCamRight.z * moveRight;
+            const candidateX = gamepadCursor.x + worldDX * GAMEPAD_CURSOR_CAMERA_SPEED * dt;
+            const candidateY = gamepadCursor.y - worldDZ * GAMEPAD_CURSOR_CAMERA_SPEED * dt; // world Z = -ROS Y
+
+            // Applied per-axis, not as one combined step: keeps the cursor
+            // from wandering out of the camera's own frame (this is the
+            // ONLY clamp in camera perspective — GAMEPAD_CURSOR_MAX_RADIUS
+            // below still applies too, but the view itself is always the
+            // tighter constraint) while still letting it slide along
+            // whichever edge it's hit instead of freezing outright the
+            // moment either axis alone would leave the frame.
+            if (isRosPointVisibleInCamera(candidateX, gamepadCursor.y)) gamepadCursor.x = candidateX;
+            if (isRosPointVisibleInCamera(gamepadCursor.x, candidateY)) gamepadCursor.y = candidateY;
+        } else {
+            // Map perspective (default) and Mode 3 (no camera-relative
+            // option there): plain map-aligned movement — stick right/up
+            // moves the cursor map-east/map-north, same as before.
+            const cursorSpeed = GAMEPAD_CURSOR_PIXEL_SPEED / getCurrentViewParams().scale;
+            gamepadCursor.x += moveRight * cursorSpeed * dt;
+            gamepadCursor.y += moveForward * cursorSpeed * dt;
+        }
+        const cursorDist = Math.hypot(gamepadCursor.x, gamepadCursor.y);
+        if (cursorDist > GAMEPAD_CURSOR_MAX_RADIUS) {
+            const k = GAMEPAD_CURSOR_MAX_RADIUS / cursorDist;
+            gamepadCursor.x *= k;
+            gamepadCursor.y *= k;
+        }
+
+        if (activeAppMode === 1) {
+            // Square/Triangle/Circle place a buoy/moving-boat/goal at the
+            // cursor — selecting the tool via the real tool-btn's own
+            // .click() (so the sidebar's active-tool highlight stays in
+            // sync, exactly like a mouse-driven selection) and then placing
+            // immediately, one press, no separate confirm step.
+            if (gamepadButtonJustPressed(gp, GP_BTN.SQUARE)) {
+                document.getElementById('btn-static-buoy')?.click();
+                placeMode1EntityAt(gamepadCursor.x, gamepadCursor.y);
+            }
+            if (gamepadButtonJustPressed(gp, GP_BTN.TRIANGLE)) {
+                document.getElementById('btn-moving-boat')?.click();
+                placeMode1EntityAt(gamepadCursor.x, gamepadCursor.y);
+            }
+            if (gamepadButtonJustPressed(gp, GP_BTN.CIRCLE)) {
+                document.getElementById('btn-goal')?.click();
+                placeMode1EntityAt(gamepadCursor.x, gamepadCursor.y);
+            }
+            if (gamepadButtonJustPressed(gp, GP_BTN.CROSS)) {
+                document.getElementById('btn-run')?.click();
+            }
+            // L2 removes the nearest buoy/moving-boat to the cursor,
+            // regardless of which placement tool is currently selected —
+            // deleting shouldn't require switching tools first. Same snap
+            // radius and target set as the mouse's Remove tool
+            // (removeMode1EntityAt() above). Not L1 — that's now global
+            // mode-switching (see cycleMode()), same button in every mode.
+            if (gamepadButtonJustPressed(gp, GP_BTN.L2)) {
+                removeMode1EntityAt(gamepadCursor.x, gamepadCursor.y);
+            }
+            // R3 (right stick click) swaps which way the stick moves the
+            // cursor (map-aligned vs camera-relative — see above) — a
+            // yellow frame (updateGamepadPerspectiveUI()) marks whichever
+            // is live. The crosshair itself keeps drawing on both panels
+            // either way. Switching TO camera perspective specifically can
+            // land the cursor somewhere that view's own frame doesn't
+            // currently cover at all (e.g. it was out past the map's own
+            // wide-open edges) — relocate it to a known-visible spot ahead
+            // of the boat (snapCursorToCameraDefault()) rather than leaving
+            // it stuck outside the containment clamp above from the very
+            // first frame.
+            if (gamepadButtonJustPressed(gp, GP_BTN.R3)) {
+                gamepadPerspective = gamepadPerspective === 'map' ? 'camera' : 'map';
+                if (gamepadPerspective === 'camera' && !isRosPointVisibleInCamera(gamepadCursor.x, gamepadCursor.y)) {
+                    snapCursorToCameraDefault();
+                    // Camera.lookAt(boatPos...) targets the boat every frame
+                    // regardless of how far the camera's OWN position has
+                    // lerped toward its resting spot (main.js's draw()) —
+                    // right after a fresh page load/mode switch, before
+                    // that lerp has caught up, even the default offset
+                    // point above can transiently fall just outside frame.
+                    // boatPos itself is always dead-center in that case, so
+                    // it's the one guaranteed fallback.
+                    if (!isRosPointVisibleInCamera(gamepadCursor.x, gamepadCursor.y)) {
+                        gamepadCursor.x = boatPos.x;
+                        gamepadCursor.y = boatPos.y;
+                    }
+                }
+            }
+        } else if (activeAppMode === 3) {
+            // Drives the SAME hoveredBerth the mouse's mousemove listener
+            // sets (above) — render-2d.js's hover preview (open/occupied/
+            // blocked) doesn't need to know or care whether it came from a
+            // mouse or the gamepad cursor.
+            const dockTypeSel = document.getElementById('dock-type-selector');
+            const isParallel = dockTypeSel ? (dockTypeSel.value === 'parallel') : true;
+            hoveredBerth = probeBerthHoverStatus(gamepadCursor.x, gamepadCursor.y, isParallel);
+
+            // Cross (✕) confirms/selects the berth under the cursor — same
+            // validation + kickoff as a mouse click (docking.js's attemptDockAt()).
+            if (gamepadButtonJustPressed(gp, GP_BTN.CROSS)) {
+                attemptDockAt(gamepadCursor.x, gamepadCursor.y);
+            }
+        }
+    }
 
     if (activeAppMode === 2 && (heldThrusterKeys.size > 0 || gamepadDrivingThrusters)) {
         // Independent per-thruster control takes priority over the combined

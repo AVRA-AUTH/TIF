@@ -156,23 +156,35 @@ function detectBerthAtClick(rx, ry, isParallel) {
     const bestBerth = findBerthDescriptor(rx, ry, isParallel);
 
     if (!bestBerth) {
-        alert("No valid pier edge detected! Please click closer to a rigid wooden dock.");
+        showAlert("No valid pier edge detected! Please click closer to a rigid wooden dock.", '🧭');
         return null;
     }
 
     // Check if selected spot overlaps a parked vessel on finger jetties
     if (isBerthOccupied(bestBerth)) {
-        alert("⛔ Space Occupied! A parked vessel is currently docked at this location. Please select an open spot.");
+        showAlert("Space Occupied! A parked vessel is currently docked at this location. Please select an open spot.", '⛔');
         return null;
     }
 
     // 3. Perception / Collision Check for obstacles
     if (isBerthBlocked(bestBerth)) {
-        alert("🚫 OBSTACLE DETECTED! There is another vessel parked there. Choose an empty space.");
+        showAlert("OBSTACLE DETECTED! There is another vessel parked there. Choose an empty space.", '🚫');
         return null;
     }
 
     return bestBerth;
+}
+
+// Shared by the map click handler (input.js) and the gamepad's Cross-press
+// (thrusterLoop, input.js) so both trigger a docking run through the exact
+// same validation + kickoff, whether the point came from a mouse click or
+// the gamepad cursor.
+function attemptDockAt(rx, ry) {
+    const dockTypeSel = document.getElementById('dock-type-selector');
+    const isParallel = dockTypeSel ? (dockTypeSel.value === 'parallel') : true;
+    const bestBerth = detectBerthAtClick(rx, ry, isParallel);
+    if (!bestBerth) return;
+    startDynamicDocking(bestBerth);
 }
 
 function startDynamicDocking(chosen) {

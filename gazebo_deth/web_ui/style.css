@@ -95,11 +95,130 @@ button {
 button:hover { background-color: #3b3b54; }
 button.active { background-color: var(--primary); }
 
+/* Mode 1's Remove tool — kept visually distinct (a "danger" tint) from the
+   add-buoy/add-boat/set-goal tools above it, in both its resting and its
+   selected (.active) state, instead of turning the same blue those do. */
+.tool-btn.remove-tool { background-color: #4a2233; margin-top: 0.6rem; }
+.tool-btn.remove-tool:hover { background-color: #5c2b40; }
+.tool-btn.remove-tool.active { background-color: var(--danger); }
+
 .action-btn.green { background-color: #28a745; margin-top: 0.5rem; font-size: 1rem; }
 .action-btn.green:hover { background-color: #218838; }
 
 .action-btn.red { background-color: var(--danger); margin-top: 0.5rem; }
 .action-btn.red:hover { background-color: #c82333; }
+
+/* Gamepad-aware UI: input.js toggles body.gamepad-mode on/off as a
+   controller connects/disconnects, so mouse/keyboard-only instructions
+   (Arrow Keys/WASD help text, "click a pier edge") hide once a controller
+   takes over — otherwise both sets of instructions stack up in an already-
+   small sidebar, which is exactly the "too much info" the gamepad additions
+   were creating. */
+.gamepad-only { display: none; }
+body.gamepad-mode .gamepad-only { display: block; }
+body.gamepad-mode .no-gamepad-only { display: none; }
+
+/* Mode 1's gamepad "which view am I aiming through" indicator (R3 toggles
+   gamepadPerspective, state.js) — a glowing yellow frame around whichever
+   panel the crosshair is currently drawn on, so a mid-panel crosshair
+   swap reads as "you're looking through this one now" rather than being
+   ambiguous about which view is live. */
+.view-panel.gamepad-perspective-active {
+    border: 2px solid #ffd700;
+    box-shadow: 0 0 16px rgba(255, 215, 0, 0.5), inset 0 0 16px rgba(255, 215, 0, 0.12);
+}
+
+/* Compact gamepad status chip — a small pill instead of a full-width
+   paragraph box, used wherever a mode needs to show "what does the
+   controller do right now" (input.js's updateGamepadStatusMode1/2, Mode 3's
+   static hint in index.html). Deliberately terse: per-button mappings live
+   on the buttons themselves (data-label-gamepad swaps, applyGamepadUiMode())
+   rather than being repeated here too. */
+.gp-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: linear-gradient(135deg, #1b263b, #223047);
+    border: 1px solid #00ffcc;
+    border-radius: 999px;
+    padding: 4px 12px;
+    font-size: 0.75rem;
+    color: #a0c4ff;
+    margin-bottom: 0.7rem;
+    box-shadow: 0 0 8px rgba(0, 255, 204, 0.18);
+    white-space: nowrap;
+}
+
+/* Custom popup (replaces alert()/confirm()) — a game-style modal: dark
+   backdrop, glowing accent border, a pop-in entrance, and per-button
+   gamepad-glyph hints (only shown once a controller is connected, via the
+   existing .gamepad-only rule above). */
+.popup-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(4, 8, 16, 0.75);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+}
+.popup-box {
+    background: linear-gradient(160deg, #1b263b, #141d2e);
+    border: 2px solid #00ffcc;
+    border-radius: 14px;
+    padding: 1.6rem 1.8rem;
+    max-width: 400px;
+    text-align: center;
+    box-shadow: 0 0 0 1px rgba(0, 255, 204, 0.15), 0 12px 40px rgba(0, 0, 0, 0.6), 0 0 24px rgba(0, 255, 204, 0.25);
+    animation: popup-pop-in 0.22s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+.popup-icon {
+    font-size: 2.4rem;
+    line-height: 1;
+    margin-bottom: 0.5rem;
+    filter: drop-shadow(0 0 8px rgba(0, 255, 204, 0.35));
+}
+.popup-message {
+    margin: 0 0 1.2rem 0;
+    font-size: 1.05rem;
+    line-height: 1.45;
+    color: #eaf6ff;
+    white-space: pre-line; /* preserves \n\n from the collision-confirm message */
+}
+.popup-actions {
+    display: flex;
+    gap: 0.7rem;
+    justify-content: center;
+}
+.popup-btn {
+    width: auto;
+    padding: 0.6rem 1.6rem;
+    font-size: 0.95rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    border-radius: 8px;
+}
+.popup-btn-ok { background-color: #28a745; }
+.popup-btn-ok:hover { background-color: #218838; }
+.popup-btn-cancel { background-color: #3b3b54; }
+.popup-btn-cancel:hover { background-color: #4a4a68; }
+/* Overrides the generic ".gamepad-only { display: block }" toggle above —
+   this hint sits inline inside a button, not as its own block. */
+body.gamepad-mode .popup-btn-hint.gamepad-only { display: inline-flex; }
+.popup-btn-hint {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.35);
+    font-size: 0.8rem;
+}
+@keyframes popup-pop-in {
+    from { opacity: 0; transform: scale(0.85) translateY(8px); }
+    to { opacity: 1; transform: scale(1) translateY(0); }
+}
 
 #viewport-container {
     flex-grow: 1;

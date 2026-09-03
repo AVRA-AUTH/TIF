@@ -301,6 +301,39 @@ function renderEntities2D(mapScale) {
     });
 }
 
+// Mode 1's gamepad cursor (input.js's thrusterLoop) — a crosshair at
+// gamepadCursor's ROS position, tinted by whichever tool is currently
+// selected (matches the yellow buoy/blue boat/green goal colors
+// renderEntities2D uses for the real thing) so it doubles as a preview of
+// what pressing Square/Triangle/Circle will place there. Guarded with
+// typeof since this file loads before state.js declares gamepadCursor only
+// matters at call-time (main.js's draw loop), by which point it always
+// exists.
+function renderGamepadCursor2D() {
+    if (typeof gamepadCursor === 'undefined' || !gamepadCursor.active) return;
+    const p = rosToCanvas(gamepadCursor.x, gamepadCursor.y);
+    const color = currentMode === 'dynamic' ? '#17a2b8' : currentMode === 'goal' ? '#28a745' : '#ffc107';
+
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(p.x - 12, p.y);
+    ctx.lineTo(p.x - 4, p.y);
+    ctx.moveTo(p.x + 4, p.y);
+    ctx.lineTo(p.x + 12, p.y);
+    ctx.moveTo(p.x, p.y - 12);
+    ctx.lineTo(p.x, p.y - 4);
+    ctx.moveTo(p.x, p.y + 4);
+    ctx.lineTo(p.x, p.y + 12);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 3, 0, 2 * Math.PI);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.restore();
+}
+
 // Draw ASV Boat (2D Map)
 function renderBoatIcon2D() {
     const boatCanvas = rosToCanvas(boatPos.x, boatPos.y);

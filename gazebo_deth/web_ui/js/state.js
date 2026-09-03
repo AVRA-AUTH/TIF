@@ -87,10 +87,44 @@ let lastPublishedAngular = 0.0;
 let lastPublishedLeftThrust = 0.0;
 let lastPublishedRightThrust = 0.0;
 let manualThrustOverrideActive = false; // mirrors what was last sent on manualOverrideTopic
+let flashBoostActive = false; // mirrors what was last sent on flashBoostTopic (Mode 2's FLASH preset)
 
-// Mode 2 PS4/gamepad state (input.js's pollGamepad()). false = Cruise (left
+// Mode 2 PS4/gamepad state (input.js's thrusterLoop()). false = Cruise (left
 // stick drives the combined-drive scheme, same as arrow keys); true = Twin
 // Thruster (left/right stick each drive one hull's thruster directly, same
 // scheme as W/A/R/D) — toggled by the Circle (◯) button.
 let gamepadThrusterMode = false;
-let gamepadCirclePrev = false; // edge-detects Circle so a held press doesn't toggle every frame
+
+// Generic button-press edge-detector state, keyed by standard Gamepad API
+// button index, shared across every mode's gamepad handling (input.js's
+// gamepadButtonJustPressed()) — a physical button's press/release is a
+// controller-level fact, not a per-mode one, so one shared map avoids each
+// mode needing its own prev-state flag for the same button.
+let gamepadButtonPrev = {};
+
+// Mode 1 PS4/gamepad cursor (input.js's thrusterLoop()) — a virtual mouse
+// position in ROS-frame meters, moved by the left stick and drawn as a
+// crosshair on the 2D map (render-2d.js's renderGamepadCursor2D()).
+// Square/Triangle/Circle place a buoy/moving-boat/goal at this position,
+// same as clicking the map does at the real mouse position. Starts at Mode
+// 1's own spawn point (a sensible first cursor spot near the boat) the first
+// time a gamepad is used; `active` gates both drawing it and the cap on
+// clamping it into the play area (see thrusterLoop).
+// Offset +15m on x from MODE1_START rather than sitting exactly on it — the
+// boat spawns AT MODE1_START, so a cursor starting dead-on it would reject
+// a first, eager placement press as "too close to your boat" before the
+// player has even moved the stick once.
+let gamepadCursor = { x: MODE1_START.x + 15, y: MODE1_START.y, active: false };
+
+// Mode 1's gamepad "which way does the stick move the cursor" toggle (R3) —
+// 'map' or 'camera'. The shared cursor itself is always drawn on BOTH
+// panels (render-2d.js's renderGamepadCursor2D(), detection-overlay.js's
+// renderGamepadCursorDetection()) — this only changes how the LEFT STICK's
+// direction gets interpreted (thrusterLoop, input.js): 'map' moves it
+// map-aligned (stick-right = map-east), 'camera' moves it relative to
+// whichever way the boat's camera currently faces (stick-right = camera's
+// own screen-right), which is what actually feels intuitive while watching
+// that view instead of the top-down map. index.html's view-panel gets a
+// glowing yellow border to match (input.js's updateGamepadPerspectiveUI())
+// so it's clear which interpretation is currently active.
+let gamepadPerspective = 'map';

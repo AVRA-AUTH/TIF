@@ -94,6 +94,29 @@ ANGULAR_GAIN = 41.6
 MAX_THRUST_FWD = 51.5
 MAX_THRUST_REV = -40.2
 
+# Flash Mode (web_ui/js Mode 2's "FLASH (300%)" preset, toggled via
+# /asv_boat/flash_boost_enable) — a deliberately unrealistic 3x boost for a
+# kids' exhibit demo, matching the same 3x headroom exhibition_water.sdf's
+# Thruster plugins now allow through (max_thrust_cmd/min_thrust_cmd raised
+# from 51.5/-40.2 to 154.5/-120.6 there). Every other preset, and every
+# autonomous Mode 1/3 nav run, never touches this topic and stays clamped at
+# the real MAX_THRUST_FWD/REV above exactly as before.
+FLASH_THRUST_FWD = 154.5
+FLASH_THRUST_REV = -120.6
+
+# Angular turning authority is intentionally NOT part of Flash Mode's boost
+# — only straight-line thrust gets the extra headroom. Without this, Flash's
+# wider hw_cap_fwd/rev let web_ui/js Mode 2's already-uncapped turn demand
+# (the "EXPERIMENT" targetAngular=15.0, input.js — deliberately way past
+# MAX_ANGULAR so real hardware saturation decides the actual spin rate) push
+# BOTH thrusters all the way out to the FLASH ceiling instead of the real
+# one, roughly tripling the boat's real top spin rate (~2.9 rad/s -> ~8.7
+# rad/s — see the same "targetAngular=15.0" comment's own derivation) —
+# reads as an uncontrollable spin, not "fast." Capped at the smaller of the
+# two real per-side limits so neither thruster can exceed real turning
+# authority in either direction, Flash or not.
+ANGULAR_THRUST_CAP = min(MAX_THRUST_FWD, abs(MAX_THRUST_REV))  # 40.2N
+
 # Boat's real max turn rate — must mirror web_ui/js/config.js's MAX_ANGULAR.
 MAX_ANGULAR = 1.2
 
@@ -134,6 +157,7 @@ class CmdVelThrustMixer(Node):
 
         self.turn_reserve_enabled = False
         self.manual_override = False
+        self.flash_boost_enabled = False
         self.cmd_linear = 0.0
         self.cmd_angular = 0.0
         self.measured_speed = 0.0
@@ -145,10 +169,14 @@ class CmdVelThrustMixer(Node):
         self.create_subscription(Odometry, '/odom', self.odom_callback, 10)
         self.create_subscription(Bool, '/asv_boat/turn_reserve_enable', self.turn_reserve_callback, 10)
         self.create_subscription(Bool, '/asv_boat/manual_thrust_override', self.manual_override_callback, 10)
+        self.create_subscription(Bool, '/asv_boat/flash_boost_enable', self.flash_boost_callback, 10)
         self.create_timer(CONTROL_PERIOD_SEC, self.control_step)
 
     def turn_reserve_callback(self, msg):
         self.turn_reserve_enabled = msg.data
+
+    def flash_boost_callback(self, msg):
+        self.flash_boost_enabled = msg.data
 
     def manual_override_callback(self, msg):
         # web_ui/js/input.js's independent thruster control (W/A/R/D) writes
@@ -182,15 +210,28 @@ class CmdVelThrustMixer(Node):
             # manual_override_callback above.
             return
 
-        # The turn-reserve cap (when enabled) is a NARROWER ceiling than the
-        # raw hardware limits — anti-windup below has to check saturation
-        # against whichever ceiling is actually in effect this tick, or the
-        # integral could keep accumulating past the reserve cap (since it'd
-        # never see itself as "saturated" against the wider hardware limits)
-        # and wind up far past what's needed, causing a real overshoot the
-        # instant turn-reserve mode is turned back off.
-        cap_fwd = LINEAR_THRUST_CAP_FWD if self.turn_reserve_enabled else MAX_THRUST_FWD
-        cap_rev = LINEAR_THRUST_CAP_REV if self.turn_reserve_enabled else MAX_THRUST_REV
+        # The "hardware" ceiling itself shifts when Flash Mode is on (see
+        # FLASH_THRUST_FWD/REV above) — everything below (the turn-reserve
+        # cap, the anti-windup check, and the final per-side clamp) has to
+        # key off whichever ceiling is actually active this tick, or Flash
+        # would compute a boosted linear_thrust demand above only to have it
+        # silently clipped straight back down to the real 51.5/-40.2 by a
+        # stale hardcoded final clamp further down.
+        hw_cap_fwd = FLASH_THRUST_FWD if self.flash_boost_enabled else MAX_THRUST_FWD
+        hw_cap_rev = FLASH_THRUST_REV if self.flash_boost_enabled else MAX_THRUST_REV
+
+        # The turn-reserve cap (when enabled) is a NARROWER ceiling than
+        # whichever hardware ceiling is active — anti-windup below has to
+        # check saturation against whichever ceiling is actually in effect
+        # this tick, or the integral could keep accumulating past the
+        # reserve cap (since it'd never see itself as "saturated" against the
+        # wider hardware limits) and wind up far past what's needed, causing
+        # a real overshoot the instant turn-reserve mode is turned back off.
+        # Turn-reserve (Mode 3 docking) and Flash Mode (Mode 2) are never
+        # actually both enabled in practice — different modes — but if they
+        # somehow were, turning authority wins here.
+        cap_fwd = LINEAR_THRUST_CAP_FWD if self.turn_reserve_enabled else hw_cap_fwd
+        cap_rev = LINEAR_THRUST_CAP_REV if self.turn_reserve_enabled else hw_cap_rev
 
         error = self.cmd_linear - self.measured_speed
         target = self.cmd_linear
@@ -213,11 +254,12 @@ class CmdVelThrustMixer(Node):
             self.integral += error * CONTROL_PERIOD_SEC
 
         angular_thrust = self.cmd_angular * ANGULAR_GAIN * TRACK_HALF_WIDTH
+        angular_thrust = max(-ANGULAR_THRUST_CAP, min(ANGULAR_THRUST_CAP, angular_thrust))
 
         left = Float64()
-        left.data = max(MAX_THRUST_REV, min(MAX_THRUST_FWD, linear_thrust - angular_thrust))
+        left.data = max(hw_cap_rev, min(hw_cap_fwd, linear_thrust - angular_thrust))
         right = Float64()
-        right.data = max(MAX_THRUST_REV, min(MAX_THRUST_FWD, linear_thrust + angular_thrust))
+        right.data = max(hw_cap_rev, min(hw_cap_fwd, linear_thrust + angular_thrust))
 
         self.left_pub.publish(left)
         self.right_pub.publish(right)

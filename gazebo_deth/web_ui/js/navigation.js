@@ -157,11 +157,12 @@ function runNavigationStep(navDt) {
                 // Delayed so the sinking animation gets a few rendered
                 // frames in before this synchronous dialog freezes the tab.
                 setTimeout(() => {
-                    const wantsReset = confirm(
-                        (hit === 'ship' ? '🚢 Ship Collided! You crashed into another vessel.' : '🛟 Ship Collided! You hit a buoy.') +
-                        '\n\nYour boat is taking on water. Stop and reset the simulation?'
+                    showConfirm(
+                        (hit === 'ship' ? 'Ship Collided! You crashed into another vessel.' : 'Ship Collided! You hit a buoy.') +
+                        '\n\nYour boat is taking on water. Stop and reset the simulation?',
+                        () => document.getElementById('btn-reset').click(),
+                        hit === 'ship' ? '🚢' : '🛟'
                     );
-                    if (wantsReset) document.getElementById('btn-reset').click();
                 }, 1200);
             } else if (!hit) {
                 shipCollisionAlertShown = false;

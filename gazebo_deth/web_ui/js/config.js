@@ -23,6 +23,19 @@
 // tradeoff was accepted knowingly, not an oversight.
 const WORLD_SCALE = 0.4;
 
+// ================= MODE 1 (LEVEL DESIGNER) TUNABLES ================= //
+// Caps on player-placed entities — keeps a public exhibit session from
+// silently degrading (the A* pathfinder grid re-runs every 250ms during
+// live nav and gets slower the more obstacles it has to route around) or
+// packing the small lake so densely there's no clear water left to design
+// with. Enforced once, in input.js's placeMode1EntityAt(), so it applies
+// identically whether an entity was placed by mouse click or a gamepad
+// button. Deliberately excludes the ~30 baked-in moored boats at the marina
+// (isParkedShip) and the single goal marker — those aren't player-placed
+// obstacles this cap is about.
+const MAX_BUOYS = 10;
+const MAX_MOVING_BOATS = 7;
+
 // ================= MODE 2 (JOYSTICK DRIVE) TUNABLES ================= //
 // FWD/REV updated from real hardware: a single Blue Robotics T200 per side
 // at this project's real ~16V operating voltage (AVRA/Matlab/ASV_BMS/

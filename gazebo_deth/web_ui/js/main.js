@@ -54,6 +54,7 @@ function draw() {
     renderIsland2D(mapScale);
     renderEntities2D(mapScale);
     renderBoatIcon2D();
+    renderGamepadCursor2D();
 
     // Sync 3D Scene & FPV Camera
     sync3DEntities();
@@ -131,6 +132,7 @@ function draw() {
     renderer.render(scene, camera);
     detectionOverlayCtx.drawImage(renderer.domElement, 0, 0, detectionOverlayCanvas.width, detectionOverlayCanvas.height);
     drawDetectionOverlay();
+    renderGamepadCursorDetection(); // must run after drawDetectionOverlay() — reuses its detectionForward for this frame
 
     requestAnimationFrame(draw);
 }

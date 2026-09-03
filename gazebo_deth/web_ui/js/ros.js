@@ -57,6 +57,13 @@ const manualOverrideTopic = new ROSLIB.Topic({ ros: ros, name: '/asv_boat/manual
 // for Mode 3 autonomous docking runs (docking.js/lifecycle.js), since it
 // trades top speed for guaranteed turning at any commanded speed.
 const turnReserveTopic = new ROSLIB.Topic({ ros: ros, name: '/asv_boat/turn_reserve_enable', messageType: 'std_msgs/Bool' });
+// Mode 2's "FLASH (300%)" speed preset (input.js) — tells
+// cmd_vel_thrust_mixer.py to swap its real 51.5N/-40.2N ceiling for the
+// unrealistic 154.5N/-120.6N one exhibition_water.sdf's Thruster plugins
+// now allow through, for the combined-drive (cmd_vel) control scheme only.
+// W/A/R/D's raw thrust-topic path doesn't need this — it bypasses the mixer
+// entirely, so it gets the same headroom for free straight from the SDF.
+const flashBoostTopic = new ROSLIB.Topic({ ros: ros, name: '/asv_boat/flash_boost_enable', messageType: 'std_msgs/Bool' });
 // Listen to boat Odometry — the sole source of boatPos, unconditionally, in
 // every mode. This used to be gated to "only while Mode 2 or actively
 // navigating" as a minor perf shortcut, but that let boatPos sit frozen on a
