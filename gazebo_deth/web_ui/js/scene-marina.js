@@ -73,8 +73,11 @@ function createMooredBoat(x, z, hullColor, boatType = 'yacht') {
     bGroup.rotation.y = 0; // Parked horizontally into berth
     staticDetections.push({ detectionMeshes, label: 'Boat', hex: hullColor });
 
-    // Register physical collision obstacle (isParkedShip avoids yellow buoy rings)
-    entities.push({ id: 'moored_' + x + '_' + z, type: 'static', isParkedShip: true, ros_x: x, ros_y: -z });
+    // Register physical collision obstacle (isParkedShip avoids yellow buoy rings).
+    // hullLength/hullWidth (ROS x/y extents, matching the actual BoxGeometry
+    // above) let the 2D map draw each boat at its real footprint instead of a
+    // guessed rectangle — see render-2d.js's renderMarina2D().
+    entities.push({ id: 'moored_' + x + '_' + z, type: 'static', isParkedShip: true, ros_x: x, ros_y: -z, hullLength: bLen, hullWidth: bWid });
     return bGroup;
 }
 

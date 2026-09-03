@@ -129,7 +129,14 @@ function renderMarina2D(mapScale) {
     entities.forEach(ent => {
         if (!ent.isParkedShip) return;
         const p = rosToCanvas(ent.ros_x, ent.ros_y);
-        const w = 3.5 * s, h = 6 * s;
+        // Real hull footprint (ROS x/y extents), not a guessed rectangle —
+        // the old hardcoded 3.5x6 was ~4x wider than the real ~1.45m hull
+        // along the jetty, so neighboring boats' rectangles visually
+        // swallowed the genuinely-open gaps between them (packed only 2.6m
+        // apart), making an "Open" hover spot look occupied on the map even
+        // though the actual collision check (isBerthOccupied, 4.0m radius on
+        // real positions) correctly saw it as clear.
+        const w = (ent.hullLength || 3.5) * s, h = (ent.hullWidth || 1.45) * s;
         ctx.fillStyle = bColors2D[Math.abs(Math.floor(ent.ros_x * 10 + ent.ros_y)) % bColors2D.length];
         ctx.fillRect(p.x - w / 2, p.y - h / 2, w, h); // width 3.5, height 6, centered on the boat's real position
         // Thin dark outline so a "slot has a boat" reads clearly against the

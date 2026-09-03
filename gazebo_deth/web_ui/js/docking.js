@@ -98,19 +98,25 @@ function findBerthDescriptor(rx, ry, isParallel) {
     return bestBerth;
 }
 
-// Does this berth overlap a parked vessel on the finger jetties? Shared by
-// the click handler and the hover probe so both agree on what's occupied.
-// Checks the real moored-boat entities (isParkedShip) instead of a
-// hardcoded "whole jetty y-range minus one named gap" heuristic — that
-// heuristic predates scene-marina.js thinning each jetty to every OTHER
-// slot (idx % 2 !== 0 skip, "more open choices"), so it was calling every
-// one of those now-empty in-between slots "Occupied" too, with no boat
-// actually there. 4.0m covers the real x offset between a boat's own
-// position and this berth's computed docking-target x (up to ~2.4m) plus
-// a little slack, while staying well under the ~6.5m gap to the next
-// slot along the jetty (occupied or empty) so neighbors don't bleed in.
+// Does this berth overlap a parked vessel? Shared by the click handler and
+// the hover probe so both agree on what's occupied. Checks the real
+// moored-boat entities (isParkedShip) instead of a hardcoded "whole jetty
+// y-range minus one named gap" heuristic — that heuristic predates
+// scene-marina.js thinning each jetty to every OTHER slot (idx % 2 !== 0
+// skip, "more open choices"), so it was calling every one of those
+// now-empty in-between slots "Occupied" too, with no boat actually there.
+// 4.0m covers the real x offset between a boat's own position and this
+// berth's computed docking-target x (up to ~2.4m) plus a little slack, while
+// staying well under the ~6.5m gap to the next slot along the jetty
+// (occupied or empty) so neighbors don't bleed in.
+// Checked against ALL berths, not just ones named "Jetty" — the finger
+// jetties are built to end almost flush with the Spine Pier (JETTY_Y_FAR
+// sits "slightly past MARINA_PIER_Y so there's no gap", see config.js), so
+// the boat moored closest to a jetty's mouth can be only ~2m from the pier
+// face too. A name-based skip here let a Spine Pier berth right next to
+// that boat report "open" (isBerthBlocked() below excludes isParkedShip
+// entities on purpose, trusting this function to catch them).
 function isBerthOccupied(berth) {
-    if (!berth.name.includes('Jetty')) return false;
     return entities.some(ent => ent.isParkedShip &&
         Math.hypot(ent.ros_x - berth.ros_x, ent.ros_y - berth.ros_y) < 4.0);
 }
