@@ -13,6 +13,23 @@ let ignoreOdomUntil = 0;
 let currentMode = 'static';
 let activeAppMode = 1;
 
+// Global physics-simulation mode — toggled via the subtle "sim" link next to
+// the header's ROS connection status (index.html/input.js). true = local JS
+// simulation drives boatPos in every mode (lower real CPU load on the actual
+// Gazebo backend, stays smooth regardless of its real-time factor); false =
+// trust real Gazebo /odom feedback everywhere, as this app always did before
+// this toggle existed (higher fidelity, needs the backend keeping up with
+// real time). See ros.js's odom subscription and the local-integration
+// blocks in input.js's thrusterLoop (Mode 2 manual drive) and navigation.js's
+// runNavigationStep (Mode 1/3 autonomous nav/docking). Persisted across
+// reloads (localStorage), guarded like input.js's other localStorage reads
+// in case a browser has it disabled.
+let localSimEnabled = true;
+try {
+    const savedSimMode = localStorage.getItem('avraLocalSimEnabled');
+    if (savedSimMode !== null) localSimEnabled = savedSimMode === 'true';
+} catch (e) { /* localStorage unavailable — keep the default */ }
+
 let activeBerthIdx = 1; // Default to Berth #2 Side Parking
 let entities = [];
 // Static marina scenery detection targets (moored boats), fed by
@@ -115,6 +132,21 @@ let gamepadButtonPrev = {};
 // a first, eager placement press as "too close to your boat" before the
 // player has even moved the stick once.
 let gamepadCursor = { x: MODE1_START.x + 15, y: MODE1_START.y, active: false };
+
+// Mode 2 "Buoy Run" challenge state (mode2-game.js). Course entities
+// (buoys/patrol boats/goal) reuse the normal Mode 1 entity system
+// (state.js's `entities`, tagged `mode2Game: true` so teardownMode2Course()
+// can find and remove exactly them without touching anything else); danger
+// zones are a new concept with no Mode 1 equivalent, so they get their own
+// array + 3D mesh list here instead.
+let mode2GameStarted = false; // true from pressing START CHALLENGE until a mode switch/restart
+let mode2Result = null;       // null while running, else 'win' | 'lose'
+let mode2StartTime = 0;       // Date.now() when the current run started, for the countdown + final time
+let mode2DangerZones = [];    // [{x, y, radius}] — instant-fail hazard circles for the current run
+let mode2DangerZoneMeshes = []; // THREE.Group per zone (see mode2-game.js's build3DDangerZoneMeshes), cleared on teardown
+let mode2NextCheckpoint = 0;  // index into MODE2_CHECKPOINTS (config.js) of the next one the player must reach, in order
+let mode2CheckpointMeshes = []; // THREE.Group per checkpoint (see mode2-game.js's build3DCheckpointMeshes), cleared on teardown
+let mode2BoundaryMeshes = []; // 4 wall planes tracing MODE2_COURSE_BOUNDS (see mode2-game.js's build3DBoundaryWalls), cleared on teardown
 
 // Mode 1's gamepad "which way does the stick move the cursor" toggle (R3) —
 // 'map' or 'camera'. The shared cursor itself is always drawn on BOTH

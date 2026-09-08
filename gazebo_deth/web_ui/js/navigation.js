@@ -38,6 +38,21 @@ function driveRecovery(navDt) {
     currentLinear = approachVelocity(currentLinear, targetLinear, navDt);
     currentLinear = Math.max(MAX_LINEAR_REV, Math.min(MAX_LINEAR_FWD, currentLinear));
 
+    // Same local-sim integration runNavigationStep()'s main branch does
+    // (state.js's localSimEnabled) — without this, a recovery maneuver under
+    // local sim published cmd_vel and claimed to be "backing clear" every
+    // frame while boatPos itself never moved (odom is what normally moves
+    // it, and that's disabled under local sim), freezing the boat in place
+    // for the full RECOVERY_DURATION_MS/RECOVERY_FORWARD_DURATION_MS any
+    // time it grazed an obstacle — exactly the routine, frequent event
+    // Mode 3's tight marina maneuvering triggers.
+    if (localSimEnabled) {
+        boatPos.x += Math.cos(boatPos.yaw) * currentLinear * navDt;
+        boatPos.y += Math.sin(boatPos.yaw) * currentLinear * navDt;
+        boatPos.yaw += currentAngular * navDt;
+        boatPos.speed = currentLinear;
+    }
+
     publishRecoveryFrame('↩️ Recovering — backing clear of obstruction...');
 }
 
@@ -66,6 +81,14 @@ function driveRecoveryForward(navDt) {
 
     currentLinear = approachVelocity(currentLinear, RECOVERY_FORWARD_SPEED, navDt);
     currentLinear = Math.max(MAX_LINEAR_REV, Math.min(MAX_LINEAR_FWD, currentLinear));
+
+    // See driveRecovery()'s own copy of this block for why it's needed.
+    if (localSimEnabled) {
+        boatPos.x += Math.cos(boatPos.yaw) * currentLinear * navDt;
+        boatPos.y += Math.sin(boatPos.yaw) * currentLinear * navDt;
+        boatPos.yaw += currentAngular * navDt;
+        boatPos.speed = currentLinear;
+    }
 
     publishRecoveryFrame('↩️ Recovering — creeping clear...');
 }
@@ -627,12 +650,22 @@ function runNavigationStep(navDt) {
                     ? approachVelocity(currentAngular, targetAngular, navDt, AUTONOMOUS_ANGULAR_RAMP_RATE)
                     : approachVelocity(currentAngular, targetAngular, navDt);
 
-                // boatPos itself is NOT integrated here — it comes solely
-                // from the /odom subscription (same as Mode 2), so what's
-                // rendered/used for the next frame's dist/yawDiff is
-                // Gazebo's real physics output, not a client-side guess.
-                // currentLinear/currentAngular above only shape the
-                // outgoing /cmd_vel demand.
+                // boatPos: real /odom feedback by default (ros.js's
+                // subscription), same as always — Gazebo's real physics
+                // output, not a client-side guess. If the header's subtle
+                // "sim" toggle has switched to local simulation
+                // (localSimEnabled, state.js) — e.g. because the real
+                // backend's physics step rate can't keep up with wall-clock
+                // time, degrading /odom — this integrates boatPos from the
+                // SAME currentLinear/currentAngular demand just ramped
+                // above instead, exactly the same approach Mode 2's own
+                // manual-drive local sim uses (input.js's thrusterLoop).
+                if (localSimEnabled) {
+                    boatPos.x += Math.cos(boatPos.yaw) * currentLinear * navDt;
+                    boatPos.y += Math.sin(boatPos.yaw) * currentLinear * navDt;
+                    boatPos.yaw += currentAngular * navDt;
+                    boatPos.speed = currentLinear;
+                }
 
                 // Hydrodynamic Roll Banking: Lean boat hull realistically into turns in 3D
                 if (boatGroup) {
@@ -689,7 +722,12 @@ function runNavigationStep(navDt) {
 // waypoint AI, and per-frame 3D mesh sync (heave/pitch/roll). Called once
 // per frame from main.js, unconditionally (not gated on isNavigating —
 // dynamic boats patrol regardless of whether the ASV itself is navigating).
-function updateDynamicEntities() {
+// navDt: real elapsed seconds since the last frame (main.js's draw() already
+// computes this for the player's own physics) — patrol boats now move on the
+// same real-time basis instead of a fixed per-frame step (see the position/
+// heading updates below), so their speed no longer silently depends on the
+// browser's actual frame rate.
+function updateDynamicEntities(navDt) {
     entities.forEach(entity => {
         if (entity.type === 'dynamic') {
             const mesh = threeEntities.get(entity.id);
@@ -713,6 +751,20 @@ function updateDynamicEntities() {
                 }
             });
 
+            // Mode 2 "Buoy Run" only: the danger zones and channel boundary
+            // are forbidden for the PLAYER's boat (mode2-game.js's
+            // checkMode2GameState()) — patrol boats respect the same
+            // forbidden area. The avoidance steering further below tries to
+            // keep them from ever getting there in the first place; this is
+            // the backstop for if they end up there anyway (same sunk/
+            // crashed fate as hitting a buoy above).
+            if (activeAppMode === 2 && !entity.isCrashed) {
+                const inDangerZone = mode2DangerZones.some(z => Math.hypot(entity.ros_x - z.x, entity.ros_y - z.y) < z.radius);
+                const b = MODE2_COURSE_BOUNDS;
+                const outOfBounds = entity.ros_x < b.xMin || entity.ros_x > b.xMax || entity.ros_y < b.yMin || entity.ros_y > b.yMax;
+                if (inDangerZone || outOfBounds) entity.isCrashed = true;
+            }
+
             if (entity.isCrashed) return;
 
             // Initialize realistic heavy ship patrol waypoints & heading if missing
@@ -727,7 +779,17 @@ function updateDynamicEntities() {
                 entity.patrolIdx = 0;
                 entity.heading = Math.random() * Math.PI * 2;
                 entity.speedMode = Math.random() < 0.5 ? 'constant' : 'variable';
-                entity.baseSpeed = 1.0;
+                // Respects a pre-set baseSpeed (Mode 2's course config —
+                // MODE2_COURSE_BOATS' medium/fast tiers, mode2-game.js's
+                // spawnMode2Course(), calibrated in real m/s against the
+                // player's own MAX_LINEAR_FWD) instead of always overwriting
+                // it — defaults to 3.0 m/s for anything that doesn't set one
+                // (Mode 1's player-placed moving boats), matching this same
+                // default's old effective speed (1.0 * 0.05 per frame * an
+                // assumed 60fps) now that the position update below is real-
+                // time-based instead of per-frame — same visual speed as
+                // before, just no longer tied to the browser's frame rate.
+                entity.baseSpeed = entity.baseSpeed !== undefined ? entity.baseSpeed : 3.0;
                 entity.speed = entity.baseSpeed;
             }
 
@@ -741,22 +803,94 @@ function updateDynamicEntities() {
                 entity.patrolIdx = (entity.patrolIdx + 1) % entity.patrolPoints.length;
             }
 
-            // Gradual heavy rudder turning towards target
-            const targetHeading = Math.atan2(dy, dx);
+            // Buoy avoidance: steer away from any static buoy inside a
+            // keep-out radius, blended with the normal patrol-waypoint
+            // heading below — patrol boats should respect a buoy's own
+            // SAFETY_RADIUS keep-out ring (the same dotted circle already
+            // drawn around every buoy on the 2D map) instead of only
+            // reacting once actually touching one. The crash/sink check
+            // above stays as a backstop for the rare case a buoy sits
+            // somewhere this steering genuinely can't get around (e.g.
+            // boxed in by several buoys at once in a dense Mode 1 design) —
+            // with this in place that backstop should now almost never fire.
+            const AVOID_RADIUS = SAFETY_RADIUS + 3.0;
+            let avoidX = 0, avoidY = 0;
+            entities.forEach(other => {
+                if (other.type !== 'static' || other.isParkedShip) return;
+                const adx = entity.ros_x - other.ros_x, ady = entity.ros_y - other.ros_y;
+                const adist = Math.hypot(adx, ady);
+                if (adist > 0.001 && adist < AVOID_RADIUS) {
+                    const strength = (AVOID_RADIUS - adist) / AVOID_RADIUS; // 0..1, stronger the closer it is
+                    avoidX += (adx / adist) * strength;
+                    avoidY += (ady / adist) * strength;
+                }
+            });
+
+            // Same idea, for Mode 2's forbidden area (danger zones + channel
+            // boundary — see the isCrashed backstop above) — weighted well
+            // above plain buoy avoidance (3x, starting from further out too)
+            // since straying in there is lethal for this boat, not just a
+            // collision to route around: a worst-case head-on approach needs
+            // a real safety margin, not just barely staying outside the
+            // line, given this boat's slow heavy-ship turn rate (heading +=
+            // headingDiff * 0.015 below).
+            if (activeAppMode === 2) {
+                mode2DangerZones.forEach(zone => {
+                    const zdx = entity.ros_x - zone.x, zdy = entity.ros_y - zone.y;
+                    const zdist = Math.hypot(zdx, zdy);
+                    const zoneAvoidRadius = zone.radius + 12.0;
+                    if (zdist > 0.001 && zdist < zoneAvoidRadius) {
+                        const strength = (zoneAvoidRadius - zdist) / zoneAvoidRadius;
+                        avoidX += (zdx / zdist) * strength * 3.0;
+                        avoidY += (zdy / zdist) * strength * 3.0;
+                    }
+                });
+
+                const BOUNDARY_AVOID_MARGIN = 6.0;
+                const b = MODE2_COURSE_BOUNDS;
+                const distFromXMin = entity.ros_x - b.xMin, distFromXMax = b.xMax - entity.ros_x;
+                const distFromYMin = entity.ros_y - b.yMin, distFromYMax = b.yMax - entity.ros_y;
+                if (distFromXMin < BOUNDARY_AVOID_MARGIN) avoidX += (BOUNDARY_AVOID_MARGIN - distFromXMin) / BOUNDARY_AVOID_MARGIN * 1.5;
+                if (distFromXMax < BOUNDARY_AVOID_MARGIN) avoidX -= (BOUNDARY_AVOID_MARGIN - distFromXMax) / BOUNDARY_AVOID_MARGIN * 1.5;
+                if (distFromYMin < BOUNDARY_AVOID_MARGIN) avoidY += (BOUNDARY_AVOID_MARGIN - distFromYMin) / BOUNDARY_AVOID_MARGIN * 1.5;
+                if (distFromYMax < BOUNDARY_AVOID_MARGIN) avoidY -= (BOUNDARY_AVOID_MARGIN - distFromYMax) / BOUNDARY_AVOID_MARGIN * 1.5;
+            }
+
+            // Gradual heavy rudder turning towards target (blended away from
+            // any nearby buoy above — a vector sum of the two headings' unit
+            // circle points, so avoidance smoothly dominates as it strengthens
+            // rather than snapping between "ignore it" and "hard turn").
+            let targetHeading = Math.atan2(dy, dx);
+            if (avoidX !== 0 || avoidY !== 0) {
+                const avoidHeading = Math.atan2(avoidY, avoidX);
+                const avoidWeight = Math.min(1, Math.hypot(avoidX, avoidY));
+                const bx = Math.cos(targetHeading) * (1 - avoidWeight) + Math.cos(avoidHeading) * avoidWeight;
+                const by = Math.sin(targetHeading) * (1 - avoidWeight) + Math.sin(avoidHeading) * avoidWeight;
+                targetHeading = Math.atan2(by, bx);
+            }
             let headingDiff = targetHeading - entity.heading;
 
             while (headingDiff > Math.PI) headingDiff -= 2 * Math.PI;
             while (headingDiff < -Math.PI) headingDiff += 2 * Math.PI;
 
-            entity.heading += headingDiff * 0.015; // Slow, wide ship turning radius
-           
+            // Real-time-based turn rate (was a flat 0.015-per-FRAME multiply
+            // — framerate-dependent, like the position update below).
+            // PATROL_TURN_RATE_PER_SEC = 0.9 reproduces that same original
+            // feel at a 60fps baseline (0.015 * 60 ≈ 0.9), just no longer
+            // tied to the browser's actual frame rate.
+            const PATROL_TURN_RATE_PER_SEC = 0.9;
+            entity.heading += headingDiff * PATROL_TURN_RATE_PER_SEC * navDt; // Slow, wide ship turning radius
+
             if (entity.speedMode === 'variable') {
-            entity.speed = entity.baseSpeed * (0.6 + 0.4 * Math.sin(Date.now() * 0.0005 + entity.ros_x));
+                entity.speed = entity.baseSpeed * (0.6 + 0.4 * Math.sin(Date.now() * 0.0005 + entity.ros_x));
             }
 
-            // Advance boat position forward along its hull orientation
-            entity.ros_x += Math.cos(entity.heading) * entity.speed * 0.05;
-            entity.ros_y += Math.sin(entity.heading) * entity.speed * 0.05;
+            // Advance boat position forward along its hull orientation.
+            // entity.speed is real m/s now (was framerate-dependent — see
+            // this function's own dt comment above), directly comparable to
+            // the player's own MAX_LINEAR_FWD for the first time.
+            entity.ros_x += Math.cos(entity.heading) * entity.speed * navDt;
+            entity.ros_y += Math.sin(entity.heading) * entity.speed * navDt;
 
             // Sync 3D Mesh Position, Yaw, Pitch, Roll & Water Heave Physics in Three.js
             if (mesh) {

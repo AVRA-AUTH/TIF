@@ -33,8 +33,8 @@ const WORLD_SCALE = 0.4;
 // button. Deliberately excludes the ~30 baked-in moored boats at the marina
 // (isParkedShip) and the single goal marker — those aren't player-placed
 // obstacles this cap is about.
-const MAX_BUOYS = 10;
-const MAX_MOVING_BOATS = 7;
+const MAX_BUOYS = 7;
+const MAX_MOVING_BOATS = 4;
 
 // ================= MODE 2 (JOYSTICK DRIVE) TUNABLES ================= //
 // FWD/REV updated from real hardware: a single Blue Robotics T200 per side
@@ -75,6 +75,101 @@ const BATTERY_VOLTAGE_V = 16.0;
 const MAX_ANGULAR = 1.2;         // top turn rate (rad/s)
 const THRUST_RAMP_RATE = 6.0;    // units/sec: how fast velocity reaches its target while a thruster is held open
 const WATER_FRICTION_RATE = 1.0; // units/sec: how fast velocity decays toward zero once released
+
+// Differential-thrust -> yaw-rate model for Mode 2's manual twin-thruster
+// local simulation (see input.js's twin-thruster branch) — lets W/A/R/D and
+// the gamepad's Twin Thruster stick mode derive an equivalent targetAngular
+// the same way the combined-drive scheme already has one, instead of relying
+// on real Gazebo torque/damping to shape the turn (see state.js's
+// localSimEnabled for why that reliance can be a problem). Values mirror the
+// real boat's own documented yaw dynamics elsewhere in this codebase: a
+// 0.38m moment arm between the two thrusters' lines of action, and nR=12
+// (nRR=0, i.e. linear-only) yaw damping — e.g. max differential thrust
+// 51.5-(-40.2)=91.7N gives 0.38*91.7/12 ≈ 2.9 rad/s at full opposite-thrust,
+// matching the real physics ceiling this was cross-checked against.
+const HULL_YAW_MOMENT_ARM = 0.38; // meters
+const HULL_YAW_DAMPING = 12.0;    // nR
+
+// ================= MODE 2 "BUOY RUN" CHALLENGE COURSE ================= //
+// A fixed slalom course laid out east of the island (MODE2_START = (38, 0)),
+// well clear of both the island's keep-out ring (33m) and the marina (which
+// sits far off in negative-x/negative-y territory) — see mode2-game.js for
+// the win/fail logic that reads these. Kept as flat ROS-frame coordinates
+// (not WORLD_SCALE-relative like the marina/island) since this course has no
+// pre-scale legacy reference to stay proportional to; it was laid out
+// directly against the actual (post-scale) lake, which is what matters for
+// "does this course fit."
+const MODE2_TIME_LIMIT_MS = 100000; // 100s countdown once START CHALLENGE is pressed — a bit more room than the original 90s to match the denser 7-buoy/7-boat course below
+const MODE2_GOAL = { x: 118.0, y: 0.0 };
+const MODE2_GOAL_RADIUS = 5.0; // finish-line tolerance (m)
+// Static hazard buoys, alternating above/below the direct start->goal line
+// every 10m so reaching the goal requires an actual weave, not a straight
+// cruise. 7 buoys, evenly spaced x:[46,106].
+const MODE2_COURSE_BUOYS = [
+    { x: 46, y: 10 }, { x: 56, y: -10 }, { x: 66, y: 10 }, { x: 76, y: -10 },
+    { x: 86, y: 10 }, { x: 96, y: -10 }, { x: 106, y: 10 }
+];
+// Patrol-boat spawn points — reuses the existing dynamic-entity diamond
+// patrol (updateDynamicEntities(), navigation.js), so each roams a 24m
+// (Manhattan-radius) diamond loop around its spawn, crossing the channel
+// unpredictably. 4 boats, spread evenly across the buoy field and alternating
+// speed tier (medium/fast/medium/fast) so both are encountered throughout the
+// run, not clustered in one section. Chosen (via a small offline search — see
+// the min-distance-to-diamond-edge formula in that script) so no patrol
+// diamond ever passes within the same function's own 2.5m buoy-crash radius
+// of any MODE2_COURSE_BUOYS entry — otherwise a patrol boat could silently
+// sink into (and permanently remove) a course buoy mid-run, making the course
+// inconsistent between attempts.
+// Real m/s now (navigation.js's updateDynamicEntities() moves patrol boats
+// on real elapsed time, same as everything else) — calibrated directly
+// against the player's own real top speed (MAX_LINEAR_FWD = 2.49 m/s), not
+// arbitrary numbers. The original values here (1.0/1.7) were only ever
+// meaningful under the OLD framerate-dependent movement (implicitly ~3x at a
+// 60fps baseline — see navigation.js's dt-based rewrite) and worked out to
+// ~3.0/~5.1 m/s: already faster than the player's real max at "medium," and
+// over double it at "fast" — boats that outran the player outright and felt
+// instant next to the player's own real, ramped/dragged physics, not just
+// quick. These replacements are deliberately UNDER MAX_LINEAR_FWD so a
+// player at full throttle can still out-position either tier.
+const MODE2_PATROL_SPEED_MEDIUM = 1.4;  // ~56% of MAX_LINEAR_FWD
+const MODE2_PATROL_SPEED_FAST = 2.3;    // ~92% of MAX_LINEAR_FWD — noticeably quicker, still bounded by this boat's own slow heavy-ship turn rate (navigation.js) so it stays dodgeable
+const MODE2_COURSE_BOATS = [
+    { x: 46, y: -6, speed: MODE2_PATROL_SPEED_MEDIUM },
+    { x: 66, y: -6, speed: MODE2_PATROL_SPEED_FAST },
+    { x: 86, y: -6, speed: MODE2_PATROL_SPEED_MEDIUM },
+    { x: 106, y: -6, speed: MODE2_PATROL_SPEED_FAST }
+];
+// Danger zones (new concept, no Mode 1 equivalent — see mode2-game.js):
+// sit further off-line than the buoys so a wide swing to dodge one risks
+// clipping the other instead of being a free, no-cost detour.
+const MODE2_DANGER_ZONES = [
+    { x: 70, y: 26, radius: 9 }, { x: 96, y: -27, radius: 9 }
+];
+// Numbered intermediate checkpoints, must be reached IN ORDER before the
+// goal counts as a finish (mode2-game.js's checkMode2GameState()) — sat at
+// the buoy-gap midpoints between two consecutive weave buoys (so they're
+// already on the natural line), but #2 and #3 are also deliberately nudged
+// toward a danger zone's own edge (just outside it) so hitting them requires
+// genuinely hugging the hazard, not just threading the buoys.
+const MODE2_CHECKPOINT_RADIUS = 4.0;
+const MODE2_CHECKPOINTS = [
+    { number: 1, x: 51, y: 0 },   // gap between buoys 1 & 2
+    { number: 2, x: 71, y: 16 },  // gap between buoys 3 & 4, ~1m outside danger zone 1's edge
+    { number: 3, x: 92, y: -17 }, // gap between buoys 5 & 6, ~2m outside danger zone 2's edge
+];
+// Course boundary — leaving this rectangle instantly fails the run ("left
+// the safe channel"), same idea as a real river/regatta course marked by
+// channel buoys. Generous margin around the buoys/danger zones/patrol loops
+// above (all comfortably within x:[38,120], y:[-28,28]) so a wide dodge
+// never accidentally fails the run on its own; xMin stays clear of the
+// island's own 33m keep-out (already enforced separately by the boat's
+// normal collision handling) and xMax/yMin/yMax stay inside LAKE_RADIUS (140).
+const MODE2_COURSE_BOUNDS = { xMin: 25, xMax: 132, yMin: -40, yMax: 40 };
+// 2D tactical map zoom for Mode 2 (render-2d.js's getCurrentViewParams()),
+// same idea as Mode 3's marina zoom — centered on MODE2_COURSE_BOUNDS so the
+// whole course fills the map canvas instead of being a small strip inside
+// the full 140m-radius lake view Mode 1 uses.
+const MODE2_MAP_VIEW = { scale: 4.0, offsetX: (MODE2_COURSE_BOUNDS.xMin + MODE2_COURSE_BOUNDS.xMax) / 2, offsetY: 0.0 };
 
 // Mode 1/3 docking-leg speeds, expressed as ratios of MAX_LINEAR_FWD instead
 // of flat numbers, so they scale automatically if the top speed is ever
@@ -173,6 +268,63 @@ const MODE3_START = {
 // (5.25/4.1 kgf).
 const THRUSTER_MAX_FWD_N = 51.5;
 const THRUSTER_MIN_REV_N = -40.2;
+
+// Mode 2's Motor Power gauges (input.js's updateMode2MotorGauges()) — the
+// real ceiling those bars normalize against. Deliberately 3x the real
+// per-thruster max, not the max itself: FLASH mode (input.js's
+// setFlashBoost()) genuinely commands up to 3x THRUSTER_MAX_FWD_N, so a
+// gauge that capped at "100% = THRUSTER_MAX_FWD_N" would flatline at the
+// top for the entire top third of what's actually reachable — exactly the
+// most exciting part to actually see move. A normal (non-FLASH) full
+// throttle now reads as ~33%, FLASH as up to 100%.
+const MODE2_MOTOR_GAUGE_MAX_N = THRUSTER_MAX_FWD_N * 3;
+
+// Real turn-rate ceiling for Mode 2's LOCAL SIM cruise scheme (arrow keys /
+// gamepad Cruise stick) — derived the same way the twin-thruster branch's
+// own targetAngular already is (max differential thrust, same
+// HULL_YAW_MOMENT_ARM/HULL_YAW_DAMPING model above), so both control
+// schemes share one realistic turning feel instead of the cruise scheme
+// having its own, different ceiling. The cruise scheme's own targetAngular
+// (input.js) asks for as much as ±15.0 rad/s — a deliberate, still-active
+// "let real physics decide" experiment (see that assignment's own comment)
+// that's harmless under real Gazebo physics (the real boat's own torque/
+// damping caps the ACTUAL rotation regardless of how large the demand is)
+// but not under local sim, which has nothing else to cap it — boatPos.yaw
+// integrates directly from currentAngular there, so an uncapped demand read
+// as "turning way too fast, unrealistic" once local sim shipped.
+// Real-physics mode is intentionally left alone (still sends the full
+// ±15.0 demand, unaffected by this) since Gazebo's own physics already
+// makes it a no-op there; this constant only clamps local sim's integration.
+const MODE2_CRUISE_MAX_ANGULAR_PHYSICAL = HULL_YAW_MOMENT_ARM * (THRUSTER_MAX_FWD_N - THRUSTER_MIN_REV_N) / HULL_YAW_DAMPING; // ≈2.9 rad/s
+
+// User feedback (2026-09-09): even clamped at the fully-physical ceiling
+// above, the cruise scheme (arrow keys / gamepad Cruise stick) still felt
+// overly sensitive under local sim — "turns too much". The real boat softens
+// a turn command through actual hull inertia/torque ramp-up before it shows
+// up as rotation; local sim has none of that, it just integrates
+// currentAngular directly, so the same peak rate reads as far twitchier with
+// nothing smoothing it out. Scaled down from the physical ceiling (rather
+// than replacing it outright) so the derivation above stays meaningful and
+// this can be dialed back toward 1.0 later if it turns out to be over-tuned.
+const MODE2_LOCAL_SIM_TURN_SENSITIVITY = 0.5;
+const MODE2_CRUISE_MAX_ANGULAR = MODE2_CRUISE_MAX_ANGULAR_PHYSICAL * MODE2_LOCAL_SIM_TURN_SENSITIVITY;
+
+// How fast Mode 2's LOCAL SIM turning RAMPS UP toward a held turn command —
+// its own, slower rate than THRUST_RAMP_RATE (6.0, tuned for the linear
+// throttle's snappy feel and reused as approachVelocity()'s default). Same
+// reasoning as the sensitivity cap right above: real hull inertia already
+// softens a turn's rise on the real boat, local sim has to do that softening
+// itself instead of integrating straight to the capped rate in ~0.2s.
+const MODE2_LOCAL_SIM_ANGULAR_RAMP_RATE = 3.0;
+
+// How fast Mode 2's LOCAL SIM turning stops once the turn key/stick is
+// released — deliberately its own, faster rate than WATER_FRICTION_RATE
+// (1.0, tuned for linear coast-down), since a real hull's yaw damping
+// settles a turn much quicker than translational drift decays, and per
+// explicit request ("turning should stop faster"). Passed as
+// approachVelocity()'s overrideRate on release only; ramp-UP into a turn
+// uses MODE2_LOCAL_SIM_ANGULAR_RAMP_RATE just above instead.
+const MODE2_ANGULAR_STOP_RATE = 5.0;
 
 // Pre-Defined Open Marina Docking Berths (Side Parking & Slip Parking)
 const availableBerths = [

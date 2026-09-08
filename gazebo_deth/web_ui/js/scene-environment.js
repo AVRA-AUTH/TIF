@@ -12,9 +12,9 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x7ec0ee); // Lake Sky Blue
 scene.fog = new THREE.FogExp2(0x7ec0ee, 0.001);
 
-const camera = new THREE.PerspectiveCamera(68, 550 / 500, 0.1, 3000);
+const camera = new THREE.PerspectiveCamera(68, 500 / 440, 0.1, 3000);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(550, 500);
+renderer.setSize(500, 440);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 container3d.appendChild(renderer.domElement);

@@ -47,14 +47,23 @@ function draw() {
     renderPlannedPathLine();
 
     // Update Dynamic Moving Boats Realistic Heavy Ship Kinematics & Buoy Collision
-    updateDynamicEntities();
+    updateDynamicEntities(navDt);
 
     renderMarina2D(mapScale);
     renderCoastalCity2D();
     renderIsland2D(mapScale);
     renderEntities2D(mapScale);
+    renderMode2Extras(mapScale);
     renderBoatIcon2D();
     renderGamepadCursor2D();
+
+    // Mode 2 "Buoy Run" challenge: win/fail checking, sidebar timer/status,
+    // and the danger-zone pulse animation — all gated internally on
+    // activeAppMode === 2, so a no-op the rest of the time.
+    checkMode2GameState();
+    updateMode2Hud();
+    pulseMode2DangerZones();
+    updateMode2CheckpointVisuals();
 
     // Sync 3D Scene & FPV Camera
     sync3DEntities();
@@ -131,7 +140,13 @@ function draw() {
 
     renderer.render(scene, camera);
     detectionOverlayCtx.drawImage(renderer.domElement, 0, 0, detectionOverlayCanvas.width, detectionOverlayCanvas.height);
-    drawDetectionOverlay();
+    // Mode 2 is a plain joystick-drive 3D camera, not the perception demo —
+    // skip the bounding-box/label overlay entirely there (renderGamepadCursorDetection()
+    // already no-ops outside Mode 1 on its own, so it's still safe to call).
+    // This also cuts real per-frame cost: drawDetectionOverlay() does an
+    // 8-corner projection + bounding-box computation for every entity, which
+    // only mattered for the perception framing Mode 2 no longer has.
+    if (activeAppMode !== 2) drawDetectionOverlay();
     renderGamepadCursorDetection(); // must run after drawDetectionOverlay() — reuses its detectionForward for this frame
 
     requestAnimationFrame(draw);

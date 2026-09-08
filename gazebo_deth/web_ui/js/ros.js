@@ -74,6 +74,14 @@ const flashBoostTopic = new ROSLIB.Topic({ ros: ros, name: '/asv_boat/flash_boos
 // in every mode, so it needs boatPos to be live at all times, not just
 // during Mode 2 or an active nav/dock run.
 odomTopic.subscribe((msg) => {
+    // Local simulation (state.js's localSimEnabled, toggled via the header's
+    // subtle "sim" link) drives boatPos in JS instead of trusting this feed
+    // — see that variable's own comment for why. Real odom is simply not
+    // listened to for rendering while it's on, in any mode; resumes
+    // normally the moment it's switched off, or a mode-switch teleports the
+    // boat (resetBoatToPose() re-arms ignoreOdomUntil below either way).
+    if (localSimEnabled) return;
+
     // Drop odom updates for a short window right after resetBoatToPose() —
     // it snaps boatPos locally AND fires an async 'set_pose' to the Gazebo
     // backend, but that physics teleport takes real time to land. Without

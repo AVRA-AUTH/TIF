@@ -31,6 +31,7 @@ let boatSpeedMultiplier = 0.6;
 const customAlertOverlay = document.getElementById('custom-alert-overlay');
 const customAlertMessageEl = document.getElementById('custom-alert-message');
 const customAlertIconEl = document.getElementById('custom-alert-icon');
+const customAlertOkBtn = document.getElementById('custom-alert-ok');
 const customAlertCancelBtn = document.getElementById('custom-alert-cancel');
 let customPopupOnConfirm = null; // set only for a showConfirm() — null means "plain alert, nothing to run on OK"
 
@@ -50,12 +51,15 @@ function showAlert(message, icon = '⚠️') {
 // OK/Cancel — same as window.confirm(), but onConfirm only runs if OK/Cross
 // is chosen (there's no "wantsReset" boolean to check afterward the way
 // confirm()'s return value worked, since this can't block for one — callers
-// pass what should happen on confirm directly).
-function showConfirm(message, onConfirm, icon = '⚠️') {
-    showPopup(message, onConfirm, icon);
+// pass what should happen on confirm directly). okLabel lets a caller
+// relabel the confirm button for what it actually does here (e.g. "Restart"
+// on mode2-game.js's lose/win popups) instead of a generic "OK" that just
+// happens to also run a callback.
+function showConfirm(message, onConfirm, icon = '⚠️', okLabel) {
+    showPopup(message, onConfirm, icon, okLabel);
 }
 
-function showPopup(message, onConfirm, icon) {
+function showPopup(message, onConfirm, icon, okLabel) {
     if (!customAlertOverlay || !customAlertMessageEl) { // defensive fallback, should never hit
         if (onConfirm) { if (confirm(message)) onConfirm(); } else alert(message);
         return;
@@ -63,6 +67,9 @@ function showPopup(message, onConfirm, icon) {
     customAlertMessageEl.textContent = message;
     if (customAlertIconEl) customAlertIconEl.textContent = icon;
     if (customAlertCancelBtn) customAlertCancelBtn.style.display = onConfirm ? 'inline-flex' : 'none';
+    // Only the leading text node changes — the gamepad-hint <span> (✕) inside
+    // the button is a separate child and stays put either way.
+    if (customAlertOkBtn) customAlertOkBtn.childNodes[0].nodeValue = okLabel || 'OK';
     customPopupOnConfirm = onConfirm;
     customAlertOverlay.style.display = 'flex';
 }
@@ -93,6 +100,40 @@ window.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); confirmCustomPopup(); }
     else if (e.key === 'Escape') { e.preventDefault(); cancelCustomPopup(); }
 });
+
+// Header's subtle physics-mode toggle (index.html's #sim-mode-toggle) — see
+// state.js's localSimEnabled for the full tradeoff. Deliberately small and
+// low-contrast rather than a real button, matching the "not easily seen
+// from the player's perspective" intent. The word is the DESTINATION, not
+// the current state — same convention as a typical "Switch to Dark Mode"
+// toggle label — so while on local JS simulation ("game") it reads "sim"
+// (press to go there), and while on real Gazebo physics ("sim") it reads
+// "game" (press to go there).
+const simModeToggle = document.getElementById('sim-mode-toggle');
+function updateSimModeToggleUI() {
+    if (!simModeToggle) return;
+    simModeToggle.textContent = localSimEnabled ? 'sim' : 'game';
+    // Spells out BOTH the current state and the destination explicitly —
+    // the visible word alone is a destination label (see comment above), so
+    // a tooltip that only echoed that same word risked reading as "this
+    // word IS the current mode" instead of "click this to reach it."
+    simModeToggle.title = localSimEnabled
+        ? 'Currently: Local Simulation (low CPU). Click to switch to Real Gazebo Physics (high CPU, higher fidelity).'
+        : 'Currently: Real Gazebo Physics (high CPU, higher fidelity). Click to switch to Local Simulation (low CPU).';
+}
+simModeToggle?.addEventListener('click', () => {
+    localSimEnabled = !localSimEnabled;
+    try { localStorage.setItem('avraLocalSimEnabled', String(localSimEnabled)); } catch (e) { /* localStorage unavailable — choice just won't persist across reloads */ }
+    updateSimModeToggleUI();
+    updatePhysicsTelemetryPanels();
+});
+updateSimModeToggleUI();
+// No matching updatePhysicsTelemetryPanels() call here on purpose — this
+// runs too early (mode2MotorPanel/mode1Btn etc. below aren't declared yet,
+// a const-before-initialization error that would abort the rest of this
+// script). Initial visibility is instead set by the bootstrap
+// mode2Btn.click() at the end of mode2-game.js, which calls it from inside
+// that button's own handler, by which point everything here has loaded.
 
 canvas.addEventListener('mousemove', (e) => {
     if (activeAppMode !== 3) { hoveredBerth = null; return; }
@@ -202,7 +243,7 @@ function placeMode1EntityAt(rx, ry) {
         const countOfType = entities.filter(ent => ent.type === currentMode && !ent.isParkedShip).length;
         if (countOfType >= maxForType) {
             const label = currentMode === 'dynamic' ? 'moving boats' : 'buoys';
-            showAlert(`Max ${maxForType} ${label} reached — remove one before adding more.`, '🚧');
+            showAlert(`Max ${maxForType} ${label} reached — reset to place more.`, '🚧');
             return;
         }
 
@@ -234,42 +275,6 @@ function placeMode1EntityAt(rx, ry) {
     }
 }
 
-// Only way to get back under MAX_BUOYS/MAX_MOVING_BOATS once you've hit the
-// cap — the Reset button clears everything, this clears just one. Removes
-// whichever player-placed buoy/moving-boat is nearest (rx, ry), goal and the
-// baked-in moored marina boats excluded, if anything is within snap range.
-// Silently no-ops otherwise (Design Level tool is trial-and-error by
-// nature — a miss isn't an error worth an alert). Removes the real Gazebo
-// model too via a 'remove' spawn message (obstacle_spawner.py), the
-// single-entity counterpart to Reset's remove-everything 'reset' message.
-// Wider than a placement snap radius on purpose — a moving boat entity
-// drifts (updateDynamicEntities(), navigation.js), so by the time a press
-// registers it may no longer be exactly where it looked when aimed at;
-// generous range keeps that from reading as "removal doesn't work."
-const REMOVE_SNAP_RADIUS = 12.0;
-
-function removeMode1EntityAt(rx, ry) {
-    let closest = null;
-    let closestDist = REMOVE_SNAP_RADIUS;
-    entities.forEach(ent => {
-        if (ent.isParkedShip || (ent.type !== 'static' && ent.type !== 'dynamic')) return;
-        const d = Math.hypot(ent.ros_x - rx, ent.ros_y - ry);
-        if (d < closestDist) { closestDist = d; closest = ent; }
-    });
-    if (!closest) return;
-
-    entities = entities.filter(ent => ent !== closest);
-    const mesh = threeEntities.get(closest.id);
-    if (mesh) {
-        scene.remove(mesh);
-        threeEntities.delete(closest.id);
-    }
-
-    spawnTopic.publish(new ROSLIB.Message({
-        data: JSON.stringify({ type: 'remove', id: closest.id })
-    }));
-}
-
 canvas.addEventListener('click', (e) => {
     const rect = canvas.getBoundingClientRect();
     const cx = e.clientX - rect.left;
@@ -285,8 +290,7 @@ canvas.addEventListener('click', (e) => {
     }
 
     if (activeAppMode !== 1 || !currentMode) return;
-    if (currentMode === 'remove') removeMode1EntityAt(rx, ry);
-    else placeMode1EntityAt(rx, ry);
+    placeMode1EntityAt(rx, ry);
 });
 
 // Place obstacles/goal directly in the 3D Object Detection camera view, same
@@ -318,8 +322,7 @@ detectionOverlayCanvas.addEventListener('click', (e) => {
     const hit = new THREE.Vector3();
     if (!raycaster.ray.intersectPlane(waterPlane, hit)) return; // camera looking away from the water plane
 
-    if (currentMode === 'remove') removeMode1EntityAt(hit.x, -hit.z);
-    else placeMode1EntityAt(hit.x, -hit.z);
+    placeMode1EntityAt(hit.x, -hit.z);
 });
 
 // ▶️ RUN ASV DEMO Button
@@ -402,28 +405,76 @@ const mode3Btn = document.getElementById('mode3-btn');
 const mode1Tools = document.getElementById('mode1-tools');
 const mode2Tools = document.getElementById('mode2-tools');
 const mode3Tools = document.getElementById('mode3-tools');
+// Camera panel's own header text — Mode 1/3 keep the "Object Detection"
+// framing (their perception overlay is still live there), Mode 2 is a plain
+// joystick-drive 3D view now (main.js skips drawDetectionOverlay() in Mode 2),
+// so calling it a detection camera there would be inaccurate.
+const cameraPanelHeader = document.getElementById('camera-panel-header');
 
-// Persisted across reloads (see the restore block below this) so refreshing
-// the page returns to whichever mode was active beforehand, at that mode's
-// own starting pose, instead of always reloading into Mode 1.
-const ACTIVE_MODE_STORAGE_KEY = 'avraActiveMode';
+// DOF Dashboard (Surge/Yaw Rate sparklines) vs. Mode 2's fun Motor Power
+// gauges (below) share the same status-bar slot and are mutually exclusive,
+// driven by the sim/game toggle rather than per-mode: DOF shows real /odom-
+// measured telemetry, which only exists in "sim" (real Gazebo physics) —
+// "game" (local sim) has no independently-measured value to show there (the
+// local sim IS the commanded value, not a separate measurement), so per
+// explicit request it's simply not shown in any of the 3 modes while local
+// sim is active. Motor gauges are Mode 2 only (the joystick-drive control
+// scheme they visualize doesn't exist in Mode 1/3's autonomous nav) and only
+// in "game" mode, filling the same slot DOF would otherwise occupy there.
+const mode2MotorPanel = document.getElementById('mode2-motor-panel');
+function updatePhysicsTelemetryPanels() {
+    if (dofPanel) dofPanel.style.display = localSimEnabled ? 'none' : 'block';
+    if (mode2MotorPanel) mode2MotorPanel.style.display = (activeAppMode === 2 && localSimEnabled) ? 'block' : 'none';
+}
+
+// Fills the two Motor Power bars (index.html's #motor-bar-left/right) from
+// per-thruster Newton values — real ones from the twin-thruster scheme, an
+// approximation derived from currentLinear/currentAngular for the combined-
+// drive scheme (see both call sites, thrusterLoop). Deliberately reads as a
+// game gauge (bright rev-meter gradient, glow, a pulsing "maxed" state at
+// high throttle), not a precision instrument — that's the point.
+const motorGaugeEls = {
+    left: { bar: document.getElementById('motor-bar-left'), val: document.getElementById('motor-left-val') },
+    right: { bar: document.getElementById('motor-bar-right'), val: document.getElementById('motor-right-val') },
+};
+function updateMode2MotorGauges(leftN, rightN) {
+    const apply = (els, n) => {
+        if (!els.bar) return;
+        // Two different normalizations on purpose: the FILL is measured
+        // against MODE2_MOTOR_GAUGE_MAX_N (config.js — the real FLASH-mode
+        // ceiling, 3x a single thruster's normal max) so the bar has real
+        // headroom left to show FLASH's boost instead of flatlining at the
+        // top for its whole top third. The LABEL is measured against the
+        // normal (non-FLASH) max, so it reads as a genuine "% of normal,"
+        // topping out around 300% under full FLASH — not clamped to 100.
+        const fillFrac = Math.min(1, Math.abs(n) / MODE2_MOTOR_GAUGE_MAX_N); // 0..1, half the bar's width
+        const labelPct = Math.round((n / THRUSTER_MAX_FWD_N) * 100); // signed, uncapped (can read up to ~300 or below -200)
+        els.bar.style.width = (fillFrac * 50) + '%'; // half-track = 100% fill, since 0 sits at the center
+        els.bar.classList.toggle('reverse', n < 0);
+        els.bar.classList.toggle('maxed', fillFrac >= 0.97);
+        if (els.val) els.val.textContent = labelPct;
+    };
+    apply(motorGaugeEls.left, leftN);
+    apply(motorGaugeEls.right, rightN);
+}
 
 if (mode1Btn) {
     mode1Btn.addEventListener('click', () => {
         if (activeAppMode === 2) stopThrusters();
+        teardownMode2Course();
         activeAppMode = 1;
         gamepadCursor.x = MODE1_START.x + 15; gamepadCursor.y = MODE1_START.y; // same "start clean" rule every mode switch follows; +15 so it doesn't start exactly on the boat (state.js)
         gamepadPerspective = 'map';
         resetBoatToPose(MODE1_START);
         clearMode1Design();
-        localStorage.setItem(ACTIVE_MODE_STORAGE_KEY, '1');
         mode1Btn.classList.add('active');
         if (mode2Btn) mode2Btn.classList.remove('active');
         if (mode3Btn) mode3Btn.classList.remove('active');
         if (mode1Tools) mode1Tools.style.display = 'block';
         if (mode2Tools) mode2Tools.style.display = 'none';
         if (mode3Tools) mode3Tools.style.display = 'none';
-        if (dofPanel) dofPanel.style.display = 'block';
+        updatePhysicsTelemetryPanels();
+        if (cameraPanelHeader) cameraPanelHeader.textContent = 'Object Detection Camera (Boat Camera)';
     });
 }
 
@@ -432,47 +483,46 @@ if (mode2Btn) {
         if (activeAppMode === 2) stopThrusters();
         activeAppMode = 2;
         gamepadThrusterMode = false; // always re-enter Mode 2 in Cruise, same "start clean" rule every mode switch already follows
-        resetBoatToPose(MODE2_START);
-        clearMode1Design();
-        localStorage.setItem(ACTIVE_MODE_STORAGE_KEY, '2');
+        clearMode1Design(); // wipe any leftover Mode 1 design BEFORE laying out the Buoy Run course below
+        resetMode2Arena(); // resets boat pose + lays out a fresh course, visible immediately — START CHALLENGE (mode2-game.js) only arms the timer/win-fail checking on top of this
         mode2Btn.classList.add('active');
         if (mode1Btn) mode1Btn.classList.remove('active');
         if (mode3Btn) mode3Btn.classList.remove('active');
         if (mode2Tools) mode2Tools.style.display = 'block';
         if (mode1Tools) mode1Tools.style.display = 'none';
         if (mode3Tools) mode3Tools.style.display = 'none';
-        if (dofPanel) dofPanel.style.display = 'block';
+        updatePhysicsTelemetryPanels();
+        if (cameraPanelHeader) cameraPanelHeader.textContent = '3D Camera View (Boat Camera)';
     });
 }
 
 if (mode3Btn) {
     mode3Btn.addEventListener('click', () => {
         if (activeAppMode === 2) stopThrusters();
+        teardownMode2Course();
         activeAppMode = 3;
         gamepadCursor.x = MODE3_START.x; gamepadCursor.y = MODE3_START.y; // same "start clean" rule every mode switch follows
         resetBoatToPose(MODE3_START);
         clearMode1Design();
-        localStorage.setItem(ACTIVE_MODE_STORAGE_KEY, '3');
         mode3Btn.classList.add('active');
         if (mode1Btn) mode1Btn.classList.remove('active');
         if (mode2Btn) mode2Btn.classList.remove('active');
         if (mode3Tools) mode3Tools.style.display = 'block';
         if (mode1Tools) mode1Tools.style.display = 'none';
         if (mode2Tools) mode2Tools.style.display = 'none';
-        if (dofPanel) dofPanel.style.display = 'block';
+        updatePhysicsTelemetryPanels();
+        if (cameraPanelHeader) cameraPanelHeader.textContent = 'Object Detection Camera (Boat Camera)';
     });
 }
 
-// Restore whichever mode was active before a refresh. state.js already
-// boots activeAppMode/boatPos at Mode 1's own start pose, so only 2/3 need
-// to replay their button's full switch logic (pose reset, tool-panel
-// visibility, active-button highlight). Guarded in case a browser has
-// localStorage disabled (throws instead of returning null).
-try {
-    const savedMode = localStorage.getItem(ACTIVE_MODE_STORAGE_KEY);
-    if (savedMode === '2' && mode2Btn) mode2Btn.click();
-    else if (savedMode === '3' && mode3Btn) mode3Btn.click();
-} catch (e) { /* localStorage unavailable — just stay on Mode 1's default start */ }
+// Mode 2 (the Buoy Run challenge) is the primary exhibition experience —
+// every fresh load/refresh should land there instead of Mode 1. The actual
+// mode2Btn.click() that does this lives at the bottom of mode2-game.js
+// (the next script tag after this one), not here — mode2Btn's own click
+// handler above calls resetMode2Arena(), which isn't defined until that
+// script runs, so firing the click from here (still mid-way through THIS
+// script) would throw a ReferenceError and abort the handler partway
+// through, before it ever gets to actually laying out the course.
 
 // Mode 2 Controls: continuous thruster + water-friction velocity model.
 // A held control ramps quickly toward its fixed end velocity (thrusters
@@ -530,38 +580,9 @@ function stopThrusters() {
     }
     // Same reasoning: Flash Mode's boosted mixer ceiling must never survive
     // into Mode 1/3's autonomous /cmd_vel nav, which shares this same mixer
-    // — every path that leaves Mode 2 (mode-switch, blur, STOP) routes
-    // through here, so this is the one place that needs to guarantee it off.
+    // — every path that leaves Mode 2 (mode-switch, blur) routes through
+    // here, so this is the one place that needs to guarantee it off.
     setFlashBoost(false);
-}
-
-// On-screen D-pad: press-and-hold, matching keyboard behavior
-
-function bindThruster(el, axis) {
-    if (!el) return;
-    el.addEventListener('mousedown', () => heldAxes.add(axis));
-    el.addEventListener('touchstart', (e) => { e.preventDefault(); heldAxes.add(axis); });
-    ['mouseup', 'mouseleave', 'touchend', 'touchcancel'].forEach(evt =>
-        el.addEventListener(evt, () => heldAxes.delete(axis))
-    );
-}
-bindThruster(document.getElementById('btn-up'), 'fwd');
-bindThruster(document.getElementById('btn-down'), 'rev');
-bindThruster(document.getElementById('btn-left'), 'left');
-bindThruster(document.getElementById('btn-right'), 'right');
-
-// Mode 2's STOP button — not just a thruster kill, also snaps the boat back
-// to Mode 2's own starting pose, same "stop == back to this mode's start"
-// behavior as Mode 1's btn-reset and Mode 3's btn-reset-dock.
-function stopAndResetMode2() {
-    stopThrusters();
-    gamepadThrusterMode = false;
-    resetBoatToPose(MODE2_START);
-}
-
-const btnStop = document.getElementById('btn-stop');
-if (btnStop) {
-    btnStop.addEventListener('click', stopAndResetMode2);
 }
 
 window.addEventListener('keydown', (e) => {
@@ -759,7 +780,11 @@ let gamepadWasConnected = false;
 // sync with what a mouse click does.
 function gamepadResetActiveMode() {
     if (activeAppMode === 1) document.getElementById('btn-reset')?.click();
-    else if (activeAppMode === 2) document.getElementById('btn-stop')?.click();
+    // Mode 2 has no separate STOP/reset button (removed — START CHALLENGE
+    // already resets the arena and restarts the timer in one press, and the
+    // lose/win popup's own Restart button covers the rest), so Options here
+    // does the same as Cross already does in this mode.
+    else if (activeAppMode === 2) document.getElementById('btn-mode2-start')?.click();
     else if (activeAppMode === 3) document.getElementById('btn-reset-dock')?.click();
 }
 
@@ -805,12 +830,22 @@ function thrusterLoop() {
 
     if (activeAppMode === 2) {
         updateGamepadStatusMode2(gp);
-        // Circle (◯) toggles Cruise <-> Twin Thruster.
-        if (gp && gamepadButtonJustPressed(gp, GP_BTN.CIRCLE)) gamepadThrusterMode = !gamepadThrusterMode;
-        // D-Pad Left/Right cycles the Boat Speed presets (Slow..Flash) —
-        // reuses the same buttons a mouse click would use, see cycleSpeedPreset().
-        if (gp && gamepadButtonJustPressed(gp, GP_BTN.DPAD_LEFT)) cycleSpeedPreset(-1);
-        if (gp && gamepadButtonJustPressed(gp, GP_BTN.DPAD_RIGHT)) cycleSpeedPreset(1);
+        // Cross (✕) starts/restarts the Buoy Run challenge — same button
+        // Mode 1 uses for RUN and Mode 3 uses for Dock, so "Cross = go" stays
+        // consistent across every mode.
+        if (gp && gamepadButtonJustPressed(gp, GP_BTN.CROSS)) document.getElementById('btn-mode2-start')?.click();
+        // Everything else (driving scheme toggle, speed presets) is frozen
+        // once a run has concluded (win or lose) — Cross above still works
+        // so the player can go again immediately, matching the freeze on
+        // the actual driving logic further below.
+        if (!mode2Result) {
+            // Circle (◯) toggles Cruise <-> Twin Thruster.
+            if (gp && gamepadButtonJustPressed(gp, GP_BTN.CIRCLE)) gamepadThrusterMode = !gamepadThrusterMode;
+            // D-Pad Left/Right cycles the Boat Speed presets (Slow..Flash) —
+            // reuses the same buttons a mouse click would use, see cycleSpeedPreset().
+            if (gp && gamepadButtonJustPressed(gp, GP_BTN.DPAD_LEFT)) cycleSpeedPreset(-1);
+            if (gp && gamepadButtonJustPressed(gp, GP_BTN.DPAD_RIGHT)) cycleSpeedPreset(1);
+        }
     } else if (activeAppMode === 1) {
         updateGamepadStatusMode1(gp);
     }
@@ -895,15 +930,6 @@ function thrusterLoop() {
             if (gamepadButtonJustPressed(gp, GP_BTN.CROSS)) {
                 document.getElementById('btn-run')?.click();
             }
-            // L2 removes the nearest buoy/moving-boat to the cursor,
-            // regardless of which placement tool is currently selected —
-            // deleting shouldn't require switching tools first. Same snap
-            // radius and target set as the mouse's Remove tool
-            // (removeMode1EntityAt() above). Not L1 — that's now global
-            // mode-switching (see cycleMode()), same button in every mode.
-            if (gamepadButtonJustPressed(gp, GP_BTN.L2)) {
-                removeMode1EntityAt(gamepadCursor.x, gamepadCursor.y);
-            }
             // R3 (right stick click) swaps which way the stick moves the
             // cursor (map-aligned vs camera-relative — see above) — a
             // yellow frame (updateGamepadPerspectiveUI()) marks whichever
@@ -948,7 +974,14 @@ function thrusterLoop() {
         }
     }
 
-    if (activeAppMode === 2 && (heldThrusterKeys.size > 0 || gamepadDrivingThrusters)) {
+    // A concluded run (mode2Result set by mode2-game.js's endMode2Challenge)
+    // freezes all driving input immediately — not just once the outcome
+    // popup appears, which is deliberately delayed ~1200ms on a crash/hazard
+    // so the sink animation gets a few frames in first. Without this, a
+    // still-held throttle would keep driving the "crashed"/finished boat
+    // around during that gap. Cross (above) is the one exception, so the
+    // player can start a fresh run immediately.
+    if (activeAppMode === 2 && !mode2Result && (heldThrusterKeys.size > 0 || gamepadDrivingThrusters)) {
         // Independent per-thruster control takes priority over the combined
         // arrow-key drive whenever any W/A/R/D is held, so the two schemes
         // never both publish to the same thrust topics in the same frame.
@@ -997,6 +1030,12 @@ function thrusterLoop() {
             rightThrust = axisToThrust(-applyDeadzone(gp.axes[3]));
         }
 
+        // The player just drove without pressing START CHALLENGE first —
+        // arm the Buoy Run challenge right now (mode2-game.js), same as
+        // pressing that button, with a toast instead of a modal popup so it
+        // doesn't interrupt whatever they're already doing.
+        if (!mode2GameStarted && (leftThrust !== 0 || rightThrust !== 0)) autoStartMode2Challenge();
+
         // Hull already touching a solid boundary — kill thrust on whichever
         // thruster(s) are pushing deeper into it (like running aground into
         // thick mud), in whichever direction (forward OR reverse) that
@@ -1024,6 +1063,31 @@ function thrusterLoop() {
         lastPublishedLeftThrust = leftThrust;
         lastPublishedRightThrust = rightThrust;
 
+        // Local simulation (state.js's localSimEnabled, header toggle) —
+        // derives an equivalent linear/angular demand from the differential
+        // thrust above (same hull-drag/yaw-torque model Mode 1/3's
+        // autonomous nav already uses) and ramps+integrates boatPos in JS,
+        // instead of the old "instant on/off, real Gazebo drag+torque
+        // shapes it" model. leftThrust/rightThrust above are used AFTER the
+        // hull-contact block just above, so a blocked direction correctly
+        // stops contributing here too, not just to the real /thrust topics.
+        if (localSimEnabled) {
+            const netThrust = leftThrust + rightThrust;
+            const targetLinear = speedForThrust(Math.abs(netThrust)) * Math.sign(netThrust);
+            const targetAngular = HULL_YAW_MOMENT_ARM * (rightThrust - leftThrust) / HULL_YAW_DAMPING;
+            currentLinear = approachVelocity(currentLinear, targetLinear, dt);
+            currentAngular = approachVelocity(currentAngular, targetAngular, dt, targetAngular === 0 ? MODE2_ANGULAR_STOP_RATE : undefined);
+            currentLinear = Math.max(MAX_LINEAR_REV, Math.min(MAX_LINEAR_FWD, currentLinear));
+            boatPos.x += Math.cos(boatPos.yaw) * currentLinear * dt;
+            boatPos.y += Math.sin(boatPos.yaw) * currentLinear * dt;
+            boatPos.yaw += currentAngular * dt;
+            boatPos.speed = currentLinear;
+            // Motor gauges: real per-thruster values already computed above
+            // for this control scheme, no derivation needed (unlike the
+            // combined-drive scheme's own gauge feed further below).
+            updateMode2MotorGauges(leftThrust, rightThrust);
+        }
+
         const teleStatusEl = document.getElementById('tele-status');
         if (teleStatusEl) {
             if (blocked) {
@@ -1037,7 +1101,7 @@ function thrusterLoop() {
         document.getElementById('tele-x').textContent = boatPos.x.toFixed(2);
         document.getElementById('tele-y').textContent = boatPos.y.toFixed(2);
         document.getElementById('tele-speed').textContent = boatPos.speed.toFixed(2);
-    } else if (activeAppMode === 2) {
+    } else if (activeAppMode === 2 && !mode2Result) {
         // Just left independent-thruster control (or never entered it this
         // session) — send one final zero so the two raw thrust topics don't
         // stay pinned at their last commanded value. The Thruster plugin
@@ -1110,16 +1174,46 @@ function thrusterLoop() {
             targetAngular = turnAxis * 15.0;
         }
 
+        // Same auto-start as the twin-thruster scheme above, for this
+        // (default) combined-drive scheme.
+        if (!mode2GameStarted && (targetLinear !== 0.0 || targetAngular !== 0.0)) autoStartMode2Challenge();
+
         // Ramp UP toward a held throttle position (eases the lever open over
-        // THRUST_RAMP_RATE), but cut instantly to 0 on release instead of
-        // fading via WATER_FRICTION_RATE. Real Gazebo drag
-        // (vrx::SimpleHydrodynamics) now provides the actual coast-down —
-        // ramping the outgoing demand down too kept commanding real, decaying
-        // thrust for several seconds after release, double-applying
-        // deceleration on top of real drag and masking its true
-        // fast-then-slow (quadratic-then-linear) shape.
-        currentLinear = targetLinear !== 0.0 ? approachVelocity(currentLinear, targetLinear, dt) : 0.0;
-        currentAngular = targetAngular !== 0.0 ? approachVelocity(currentAngular, targetAngular, dt) : 0.0;
+        // THRUST_RAMP_RATE) in both physics modes. Release differs by mode:
+        // real-physics (localSimEnabled off) cuts currentLinear straight to
+        // 0 and lets real Gazebo drag (vrx::SimpleHydrodynamics) provide the
+        // actual coast-down via /odom feedback — ramping the outgoing
+        // demand down too would double-apply deceleration on top of that
+        // real drag. Local sim (localSimEnabled on) has no real drag to
+        // fall back on — boatPos is integrated in JS below from whatever
+        // currentLinear is, so release ramps down via approachVelocity's
+        // own WATER_FRICTION_RATE default instead, to reproduce that same
+        // fast-then-slow coast-down feel independent of the real backend's
+        // own performance.
+        if (localSimEnabled) {
+            currentLinear = approachVelocity(currentLinear, targetLinear, dt);
+            // Ramping UP into a turn uses its own, slower rate
+            // (MODE2_LOCAL_SIM_ANGULAR_RAMP_RATE) instead of THRUST_RAMP_RATE
+            // — see that constant's config.js comment: local sim has no real
+            // hull inertia to soften a turn's rise, so it needs its own,
+            // gentler ramp instead of snapping to the capped rate in ~0.2s.
+            // Releasing still stops fast (MODE2_ANGULAR_STOP_RATE), unchanged.
+            currentAngular = approachVelocity(currentAngular, targetAngular, dt,
+                targetAngular === 0 ? MODE2_ANGULAR_STOP_RATE : MODE2_LOCAL_SIM_ANGULAR_RAMP_RATE);
+            // targetAngular above can be as large as ±15.0 (a deliberate
+            // "let real physics decide" experiment, harmless under real
+            // Gazebo torque/damping but not here — boatPos.yaw integrates
+            // directly from currentAngular below, so nothing else caps it).
+            // Clamp to config.js's MODE2_CRUISE_MAX_ANGULAR — the twin-
+            // thruster scheme's own physical ceiling, scaled down by
+            // MODE2_LOCAL_SIM_TURN_SENSITIVITY for local sim's twitchier
+            // feel — instead of letting it climb toward the raw 15.0 target
+            // the whole time a turn key is held.
+            currentAngular = Math.max(-MODE2_CRUISE_MAX_ANGULAR, Math.min(MODE2_CRUISE_MAX_ANGULAR, currentAngular));
+        } else {
+            currentLinear = targetLinear !== 0.0 ? approachVelocity(currentLinear, targetLinear, dt) : 0.0;
+            currentAngular = targetAngular !== 0.0 ? approachVelocity(currentAngular, targetAngular, dt) : 0.0;
+        }
 
         // Hull already touching a solid boundary — kill push in whichever
         // direction (forward or reverse) is actually driving deeper into it
@@ -1135,12 +1229,31 @@ function thrusterLoop() {
             || (currentLinear < 0 && (isMovingIntoObstacle(-1) || isExitingLake(-1)));
         if (blocked) currentLinear = 0;
 
-        // boatPos itself is NOT integrated here — it comes solely from the
-        // /odom subscription above, so what's rendered is Gazebo's real
-        // physics output, not a client-side guess. currentLinear/currentAngular
-        // below only shape the outgoing /cmd_vel ramp (how fast a held key
-        // opens the throttle), like a joystick position, not the boat's
-        // actual resulting motion.
+        // Local simulation (state.js's localSimEnabled, header toggle) —
+        // boatPos is integrated here in JS from the just-ramped
+        // currentLinear/currentAngular instead of waiting for real /odom
+        // feedback (which ros.js's subscription ignores while this is on).
+        if (localSimEnabled) {
+            boatPos.x += Math.cos(boatPos.yaw) * currentLinear * dt;
+            boatPos.y += Math.sin(boatPos.yaw) * currentLinear * dt;
+            boatPos.yaw += currentAngular * dt;
+            boatPos.speed = currentLinear;
+
+            // Motor gauges (Mode 2's fun replacement for the DOF panel in
+            // game mode): the combined-drive scheme has no real per-
+            // thruster split like twin-thruster mode does, so derive an
+            // approximate one from the same models already used elsewhere
+            // — net thrust from the hull drag equation (same formula
+            // dof-panel.js's real-physics thrust readout uses, run on
+            // currentLinear instead of measured surge) and left/right split
+            // from the yaw-torque model (inverse of the twin-thruster
+            // branch's own targetAngular derivation) — so both control
+            // schemes' gauges are consistent with each other, not just a
+            // visual guess for this one.
+            const netThrustN = Math.sign(currentLinear) * (HULL_DRAG_LINEAR * Math.abs(currentLinear) + HULL_DRAG_QUADRATIC * currentLinear * currentLinear);
+            const diffThrustN = currentAngular * HULL_YAW_DAMPING / HULL_YAW_MOMENT_ARM;
+            updateMode2MotorGauges((netThrustN - diffThrustN) / 2, (netThrustN + diffThrustN) / 2);
+        }
 
         // Publish while moving/decaying; once settled at zero, send one
         // final stop and go quiet rather than flooding the bridge forever.

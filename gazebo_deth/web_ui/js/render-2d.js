@@ -9,7 +9,7 @@
 // from this file's 2D canvas drawing).
 
 // Canvas Setup. SCALE is chosen so the navigable lake circle (LAKE_RADIUS,
-// defined below) fills most of the 550x500 map canvas instead of being a
+// defined below) fills most of the 500x440 map canvas instead of being a
 // small circle lost in a sea of green land — per explicit user request.
 const canvas = document.getElementById('mapCanvas');
 const ctx = canvas.getContext('2d');
@@ -19,6 +19,11 @@ function getCurrentViewParams() {
     if (activeAppMode === 3) {
         // Zoomed in on Marina
         return { scale: 3.5, offsetX: -195.0 * WORLD_SCALE, offsetY: -145.0 * WORLD_SCALE }; // ROS center of marina
+    }
+    if (activeAppMode === 2) {
+        // Zoomed in on the Buoy Run course — same idea as Mode 3's marina
+        // zoom above (MODE2_MAP_VIEW, config.js).
+        return MODE2_MAP_VIEW;
     }
     // Global view
     return { scale: SCALE, offsetX: 0.0, offsetY: 0.0 };
@@ -267,8 +272,14 @@ function renderEntities2D(mapScale) {
 
         const p = rosToCanvas(entity.ros_x, entity.ros_y);
 
-        // Draw Visual Restrictive Imaginary Dotted Safety Circle
-        if (entity.type === 'static' || entity.type === 'dynamic') {
+        // Draw Visual Restrictive Imaginary Dotted Safety Circle — skipped
+        // for Mode 2's course entities (mode2Game): that course already
+        // draws its own, calmer hazard markers (danger zones, checkpoints —
+        // see mode2-game.js's renderMode2Extras()), and this ring is really
+        // a Mode-1-placement keep-out guide (5.5m) rather than the real hull-
+        // contact distance (~0.65-1.7m) — stacked on top of Mode 2's own
+        // course markers it was just visual noise, not useful information.
+        if ((entity.type === 'static' || entity.type === 'dynamic') && !entity.mode2Game) {
             ctx.save();
             ctx.beginPath();
             ctx.setLineDash([4, 4]);

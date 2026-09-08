@@ -297,19 +297,35 @@ function isTouchingShipOrBuoyAt(x, y, yaw) {
     const hullXExtent = Math.abs(Math.cos(yaw)) * 2.8 + Math.abs(Math.sin(yaw)) * 0.8;
     const hullYExtent = Math.abs(Math.sin(yaw)) * 2.8 + Math.abs(Math.cos(yaw)) * 0.8;
 
-    for (let b = -168 * WORLD_SCALE; b <= -128 * WORLD_SCALE; b += 6.5 * WORLD_SCALE) {
-        if (Math.abs(b - (-147.5 * WORLD_SCALE)) > 3.0) {
-            const parkedLocs = [
-                { x: -250.5 * WORLD_SCALE, y: b }, { x: -239.5 * WORLD_SCALE, y: b },
-                { x: -200.5 * WORLD_SCALE, y: b }, { x: -189.5 * WORLD_SCALE, y: b },
-                { x: -150.5 * WORLD_SCALE, y: b }, { x: -139.5 * WORLD_SCALE, y: b }
-            ];
-            // Moored hulls sit unrotated in their berth (createMooredBoat()
-            // in scene-marina.js: rotation.y = 0, up to 3.6m long x 1.45m
-            // wide) — a plain axis-aligned box vs. our own hull's box, same
-            // overlap test as the jetty boxes above.
-            for (const pl of parkedLocs) {
-                if (Math.abs(pl.x - x) <= hullXExtent + 1.8 && Math.abs(pl.y - y) <= hullYExtent + 0.73) return 'ship';
+    // Cheap bounding check before the ~42-iteration moored-ship loop below —
+    // the whole marina footprint sits within x:[-100.2, -55.8] (the
+    // parkedLocs values below, at this WORLD_SCALE), so anywhere comfortably
+    // outside that (Mode 2's entire course sits at x:[25,132]; Mode 1's own
+    // start is x:77.8) can never actually hit it. This function is now
+    // called every frame Mode 2's challenge is running (checkMode2GameState(),
+    // mode2-game.js) — previously only Mode 1's isNavigating step called it,
+    // so skipping real, unavoidable dead work here matters more than it used
+    // to. Margin is generous (40m) precisely because it only needs to rule
+    // out "obviously nowhere near," not pinpoint the boundary.
+    if (x > -40 || x < -140) {
+        // skip the moored-ship loop entirely — falls through to the buoy/
+        // dynamic-boat loop below, which is already cheap (bounded by
+        // however many entities actually exist).
+    } else {
+        for (let b = -168 * WORLD_SCALE; b <= -128 * WORLD_SCALE; b += 6.5 * WORLD_SCALE) {
+            if (Math.abs(b - (-147.5 * WORLD_SCALE)) > 3.0) {
+                const parkedLocs = [
+                    { x: -250.5 * WORLD_SCALE, y: b }, { x: -239.5 * WORLD_SCALE, y: b },
+                    { x: -200.5 * WORLD_SCALE, y: b }, { x: -189.5 * WORLD_SCALE, y: b },
+                    { x: -150.5 * WORLD_SCALE, y: b }, { x: -139.5 * WORLD_SCALE, y: b }
+                ];
+                // Moored hulls sit unrotated in their berth (createMooredBoat()
+                // in scene-marina.js: rotation.y = 0, up to 3.6m long x 1.45m
+                // wide) — a plain axis-aligned box vs. our own hull's box, same
+                // overlap test as the jetty boxes above.
+                for (const pl of parkedLocs) {
+                    if (Math.abs(pl.x - x) <= hullXExtent + 1.8 && Math.abs(pl.y - y) <= hullYExtent + 0.73) return 'ship';
+                }
             }
         }
     }
