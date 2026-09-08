@@ -268,7 +268,6 @@ if (resetDockBtn) {
         // panel, none of which belong to Mode 3.
         resetBoatToPose(MODE3_START);
         dockingBerthName = '';
-        dockHoldStartTime = null;
 
         const statusEl = document.getElementById('tele-status');
         if (statusEl) {

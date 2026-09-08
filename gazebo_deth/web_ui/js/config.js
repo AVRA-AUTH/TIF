@@ -86,11 +86,6 @@ const DOCK_REVERSE_SWING_SPEED_RATIO = -1.3 / 6.0;  // ~-0.217
 const DOCK_CREEP_SPEED_RATIO = 1.3 / 6.0;           // ~0.217
 const DOCK_BRAKE_DECEL = 0.3 * (MAX_LINEAR_FWD / 6.0); // ~0.1245 m/s^2
 
-// Official Njord rule (Task 4.2 — Parallel Docking): the vessel must come
-// to a stop parallel to the dock and remain stationary there for 5 seconds
-// before the attempt counts as successful.
-const DOCK_HOLD_DURATION_MS = 5000;
-
 // Hard speed ceiling for the whole of Mode 3 (autonomous docking) — user-
 // requested, independent of MAX_LINEAR_FWD/REV. Only the 'transit' leg
 // (which otherwise cruises at the full MAX_LINEAR_FWD) is actually affected
