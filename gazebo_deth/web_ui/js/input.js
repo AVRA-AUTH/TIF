@@ -100,13 +100,11 @@ canvas.addEventListener('mousemove', (e) => {
     const cx = e.clientX - rect.left;
     const cy = e.clientY - rect.top;
     const { rx, ry } = canvasToRos(cx, cy);
-    const dockTypeSel = document.getElementById('dock-type-selector');
-    const isParallel = dockTypeSel ? (dockTypeSel.value === 'parallel') : true;
     // {berth, status} now, not just a dockable-or-null berth — see
     // probeBerthHoverStatus() (docking.js) for why: it lets the hover
     // preview (render-2d.js) show occupied/blocked spots in red/orange
     // instead of going silent on them.
-    hoveredBerth = probeBerthHoverStatus(rx, ry, isParallel);
+    hoveredBerth = probeBerthHoverStatus(rx, ry);
 });
 
 
@@ -940,9 +938,7 @@ function thrusterLoop() {
             // sets (above) — render-2d.js's hover preview (open/occupied/
             // blocked) doesn't need to know or care whether it came from a
             // mouse or the gamepad cursor.
-            const dockTypeSel = document.getElementById('dock-type-selector');
-            const isParallel = dockTypeSel ? (dockTypeSel.value === 'parallel') : true;
-            hoveredBerth = probeBerthHoverStatus(gamepadCursor.x, gamepadCursor.y, isParallel);
+            hoveredBerth = probeBerthHoverStatus(gamepadCursor.x, gamepadCursor.y);
 
             // Cross (✕) confirms/selects the berth under the cursor — same
             // validation + kickoff as a mouse click (docking.js's attemptDockAt()).

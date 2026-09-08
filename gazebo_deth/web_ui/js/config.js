@@ -253,12 +253,10 @@ const SHORE_MARGIN = 4.0;  // Keep-out band inside LAKE_RADIUS, off-limits to ro
 // replan could route the boat right along its face with no standoff at all;
 // real hull-footprint collision then caught up a moment later, which read
 // as "the boat gets stuck against the marina." Kept under 3.7m so it can't
-// swallow the parallel-spine-pier docking align point (only 3.0m off the
-// wall by design, see docking.js's ALIGN_WALL_MARGIN) — that point must stay
-// reachable. The finger jetties already have their own 5.5m half-width
-// buffer (vs. their real 2.0m) and are left as-is; widening that further
-// would break the docking corridors that deliberately funnel close to a
-// jetty mouth.
+// swallow any docking corridor/align point that funnels close to the pier.
+// The finger jetties already have their own 5.5m half-width buffer (vs.
+// their real 2.0m) and are left as-is; widening that further would break
+// the docking corridors that deliberately funnel close to a jetty mouth.
 const MARINA_PIER_PATH_MARGIN = 3.0;
 
 // ================= ILOS GUIDANCE TUNABLES (see guidance.js) ================= //

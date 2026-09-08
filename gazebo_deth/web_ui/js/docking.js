@@ -27,11 +27,12 @@ function selectBerth(idx) {
 // Shared nearest-pier/jetty-face search, used by both the real click handler
 // and the hover-preview probe below so the two can never disagree about
 // where a berth candidate actually is. Given a map click/hover point already
-// converted to ROS coordinates (rx, ry) and the user's parking-style choice,
-// finds the nearest pier/jetty face within snap distance and returns the
-// full berth descriptor (or null if nothing is within snap distance) — no
-// occupied/obstacle validation here, see isBerthOccupied()/isBerthBlocked().
-function findBerthDescriptor(rx, ry, isParallel) {
+// converted to ROS coordinates (rx, ry), finds the nearest pier/jetty face
+// within snap distance and returns the full berth descriptor (or null if
+// nothing is within snap distance) — no occupied/obstacle validation here,
+// see isBerthOccupied()/isBerthBlocked(). Bow-in only — every berth docks
+// nose-first into its slot.
+function findBerthDescriptor(rx, ry) {
     let bestBerth = null;
     let minDist = 3.5; // 3.5m snap distance
 
@@ -42,13 +43,13 @@ function findBerthDescriptor(rx, ry, isParallel) {
             bestBerth = {
                 name: 'Dynamic Docking (Main Spine Pier)',
                 ros_x: rx,
-                ros_y: isParallel ? -171.2 * WORLD_SCALE : -168.8 * WORLD_SCALE,
-                type: isParallel ? 'parallel' : 'slip',
-                parkedYaw: isParallel ? 0.0 : -1.57,
-                corridor_x: isParallel ? rx - 15.0 : rx,
+                ros_y: -168.8 * WORLD_SCALE,
+                type: 'slip',
+                parkedYaw: -1.57,
+                corridor_x: rx,
                 corridor_y: -145.0 * WORLD_SCALE,
-                staging_x: isParallel ? rx - 15.0 : rx,
-                staging_y: isParallel ? -171.2 * WORLD_SCALE : -145.0 * WORLD_SCALE
+                staging_x: rx,
+                staging_y: -145.0 * WORLD_SCALE
             };
         }
     }
@@ -59,8 +60,7 @@ function findBerthDescriptor(rx, ry, isParallel) {
             // Left Face (wall at jx - 2.0)
             if (Math.abs(rx - (jx - 2.0)) < minDist) {
                 minDist = Math.abs(rx - (jx - 2.0));
-                const targetX = isParallel ? jx - 3.6 : jx - 5.5;
-                const stagingX = isParallel ? jx - 5.5 : targetX;
+                const targetX = jx - 5.5;
                 const openCorridorX = (index === 0) ? -265.0 * WORLD_SCALE : (index === 1 ? -220.0 * WORLD_SCALE : -170.0 * WORLD_SCALE);
                 bestBerth = {
                     name: `Dynamic Docking (Jetty ${index+1} Left)`,
@@ -68,17 +68,16 @@ function findBerthDescriptor(rx, ry, isParallel) {
                     ros_y: ry,
                     corridor_x: openCorridorX,
                     corridor_y: -105.0 * WORLD_SCALE,
-                    staging_x: stagingX,
+                    staging_x: targetX,
                     staging_y: ry,
-                    type: isParallel ? 'parallel' : 'slip',
-                    parkedYaw: isParallel ? -1.57 : 0.0
+                    type: 'slip',
+                    parkedYaw: 0.0
                 };
             }
             // Right Face (wall at jx + 2.0)
             if (Math.abs(rx - (jx + 2.0)) < minDist) {
                 minDist = Math.abs(rx - (jx + 2.0));
-                const targetX = isParallel ? jx + 3.6 : jx + 5.5;
-                const stagingX = isParallel ? jx + 5.5 : targetX;
+                const targetX = jx + 5.5;
                 const openCorridorX = (index === 2) ? -125.0 * WORLD_SCALE : (index === 0 ? -220.0 * WORLD_SCALE : -170.0 * WORLD_SCALE);
                 bestBerth = {
                     name: `Dynamic Docking (Jetty ${index+1} Right)`,
@@ -86,10 +85,10 @@ function findBerthDescriptor(rx, ry, isParallel) {
                     ros_y: ry,
                     corridor_x: openCorridorX,
                     corridor_y: -105.0 * WORLD_SCALE,
-                    staging_x: stagingX,
+                    staging_x: targetX,
                     staging_y: ry,
-                    type: isParallel ? 'parallel' : 'slip',
-                    parkedYaw: isParallel ? -1.57 : 3.14
+                    type: 'slip',
+                    parkedYaw: 3.14
                 };
             }
         }
@@ -143,8 +142,8 @@ function isBerthBlocked(berth) {
 // shows red "already has a boat" / orange "blocked by a placed obstacle" vs
 // green "open" in the hover preview (render-2d.js's renderMarina2D), instead
 // of going silent on an invalid spot until you click and read an alert().
-function probeBerthHoverStatus(rx, ry, isParallel) {
-    const bestBerth = findBerthDescriptor(rx, ry, isParallel);
+function probeBerthHoverStatus(rx, ry) {
+    const bestBerth = findBerthDescriptor(rx, ry);
     if (!bestBerth) return null;
     if (isBerthOccupied(bestBerth)) return { berth: bestBerth, status: 'occupied' };
     if (isBerthBlocked(bestBerth)) return { berth: bestBerth, status: 'blocked' };
@@ -152,14 +151,14 @@ function probeBerthHoverStatus(rx, ry, isParallel) {
 }
 
 // Mode 3 berth detection — given a map click already converted to ROS
-// coordinates (rx, ry) and the user's parking-style choice, finds the
-// nearest pier/jetty face within snap distance, validates it's not already
-// occupied or blocked, and returns the berth descriptor (or null if the
-// click/spot was invalid — matches the original inline click-handler
-// behavior exactly, including showing the same alert() messages here rather
-// than at the call site, so behavior is identical either way).
-function detectBerthAtClick(rx, ry, isParallel) {
-    const bestBerth = findBerthDescriptor(rx, ry, isParallel);
+// coordinates (rx, ry), finds the nearest pier/jetty face within snap
+// distance, validates it's not already occupied or blocked, and returns the
+// berth descriptor (or null if the click/spot was invalid — matches the
+// original inline click-handler behavior exactly, including showing the
+// same alert() messages here rather than at the call site, so behavior is
+// identical either way).
+function detectBerthAtClick(rx, ry) {
+    const bestBerth = findBerthDescriptor(rx, ry);
 
     if (!bestBerth) {
         showAlert("No valid pier edge detected! Please click closer to a rigid wooden dock.", '🧭');
@@ -186,9 +185,7 @@ function detectBerthAtClick(rx, ry, isParallel) {
 // same validation + kickoff, whether the point came from a mouse click or
 // the gamepad cursor.
 function attemptDockAt(rx, ry) {
-    const dockTypeSel = document.getElementById('dock-type-selector');
-    const isParallel = dockTypeSel ? (dockTypeSel.value === 'parallel') : true;
-    const bestBerth = detectBerthAtClick(rx, ry, isParallel);
+    const bestBerth = detectBerthAtClick(rx, ry);
     if (!bestBerth) return;
     startDynamicDocking(bestBerth);
 }
@@ -209,13 +206,9 @@ function startDynamicDocking(chosen) {
         dynamic3DBerthMesh.position.set(chosen.ros_x, 0.4, -chosen.ros_y);
     }
 
-    const isParallelMode = (chosen.type === 'parallel');
-
     const statusEl = document.getElementById('tele-status');
     if (statusEl) {
-        statusEl.textContent = isParallelMode
-            ? `⚓ Side-Docking into ${chosen.name}...`
-            : `⚓ Bow-In Docking into ${chosen.name}...`;
+        statusEl.textContent = `⚓ Bow-In Docking into ${chosen.name}...`;
         statusEl.style.color = '#00ffcc';
     }
 
@@ -233,29 +226,14 @@ function startDynamicDocking(chosen) {
     // braking) needs sub-meter precision an A* grid isn't meant to give.
     let alignX, alignY;
     if (chosen.name.includes('Spine Pier')) {
-        if (isParallelMode) {
-            // Pivoting sweeps the hull's footprint out to its full length
-            // (up to ~2.8m of clearance at some angle during the turn), not
-            // just its parked width — aligning right at the berth's own
-            // ros_y (only ~1.8m off the wall) let the hull clip the wall
-            // mid-turn even though the boat's center never got close.
-            // Align a safe distance further out, then creep the last stretch
-            // into the tight slot already parallel to the wall.
-            const ALIGN_WALL_MARGIN = 3.0;
-            alignX = chosen.corridor_x;
-            alignY = chosen.ros_y + ALIGN_WALL_MARGIN;
-        } else {
-            alignX = chosen.ros_x;
-            alignY = -145.0 * WORLD_SCALE;
-        }
+        alignX = chosen.ros_x;
+        alignY = -145.0 * WORLD_SCALE;
     } else {
         // Finger Jetties: align out in the open channel at corridor_x/berth
         // Y-level, not after already creeping into the slot — this used to
-        // creep in first and pivot last, meaning side-docking's ~90° turn
-        // (parkedYaw is perpendicular to the approach heading for
-        // parallel/side berths) happened stationary, wedged against the
-        // jetty wall/neighboring moored boat, sweeping the hull's full
-        // ~2.8m length into them almost every time.
+        // creep in first and pivot last, wedging the boat's turn into the
+        // slot stationary, against the jetty wall/neighboring moored boat,
+        // sweeping the hull's full ~2.8m length into them almost every time.
         alignX = chosen.corridor_x;
         alignY = chosen.ros_y;
     }
