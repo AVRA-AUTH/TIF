@@ -406,8 +406,24 @@ function runNavigationStep(navDt) {
             while (yawDiff > Math.PI) yawDiff -= 2 * Math.PI;
             while (yawDiff < -Math.PI) yawDiff += 2 * Math.PI;
 
+                        // Njord rule: on the FINAL docking waypoint, don't finish the run
+            // the instant distance/heading tolerance is met — hold there,
+            // stationary and parallel to the dock, for DOCK_HOLD_DURATION_MS
+            // first. Drifting back out of tolerance before the hold completes
+            // resets the clock (a boat that wanders off isn't "holding").
+            const isFinalDockingWaypoint = isAutoDocking && !inTransitPhase && pathIndex === plannedPath.length - 1;
+            if (advancePath && isFinalDockingWaypoint) {
+                if (!dockHoldStartTime) dockHoldStartTime = now;
+                if (now - dockHoldStartTime < DOCK_HOLD_DURATION_MS) {
+                    advancePath = false; // not done yet — keep holding station
+                }
+            } else if (!advancePath && isFinalDockingWaypoint) {
+                dockHoldStartTime = null; // drifted out of tolerance — restart the 5s clock
+            }
+
             if (advancePath) {
                 pathIndex = inTransitPhase ? transitEndIdx + 1 : pathIndex + 1;
+                dockHoldStartTime = null;
             } else {
                 // Unified movement model: this drives Mode 1's auto-nav and Mode 3's
                 // docking with the SAME momentum/braking physics Mode 2 uses for manual
@@ -471,6 +487,17 @@ function runNavigationStep(navDt) {
                     // Hard ceiling, independent of MAX_LINEAR_FWD/REV — only
                     // 'transit' (2.49 m/s) actually exceeds this today.
                     cruiseSpeed = Math.max(-DOCK_MAX_SPEED, Math.min(DOCK_MAX_SPEED, cruiseSpeed));
+                }
+
+                 // Live countdown while holding station on the final waypoint —
+                // overrides whatever status text the state machine above just set.
+                if (isFinalDockingWaypoint && dockHoldStartTime) {
+                    const secsLeft = Math.max(0, Math.ceil((DOCK_HOLD_DURATION_MS - (now - dockHoldStartTime)) / 1000));
+                    const statusEl = document.getElementById('tele-status');
+                    if (statusEl) {
+                        statusEl.textContent = `⚓ STATE 5: Holding Position, Parallel to Dock (${secsLeft}s)...`;
+                        statusEl.style.color = '#28a745';
+                    }
                 }
 
                 // Heading lock: hold position and turn first when badly

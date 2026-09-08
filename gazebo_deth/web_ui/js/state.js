@@ -49,6 +49,7 @@ let playerBoatCrashed = false;
 let playerCrashTime = 0;
 
 let isAutoDocking = false;
+let dockHoldStartTime = null; // timestamp when the boat first settled at the final berth waypoint
 let dockingBerthName = '';
 
 // Stuck-recovery state (navigation.js's driveRecovery()) — a committed

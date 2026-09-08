@@ -17,6 +17,7 @@
 function resetBoatToPose(pose) {
     isNavigating = false;
     isAutoDocking = false;
+    dockHoldStartTime = null;
     plannedPath = [];
     currentGoal = null;
     dockingTarget = null;
