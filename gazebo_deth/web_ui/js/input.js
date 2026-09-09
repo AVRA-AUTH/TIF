@@ -405,6 +405,14 @@ const mode3Btn = document.getElementById('mode3-btn');
 const mode1Tools = document.getElementById('mode1-tools');
 const mode2Tools = document.getElementById('mode2-tools');
 const mode3Tools = document.getElementById('mode3-tools');
+// While on local simulation ("game", state.js's localSimEnabled) nothing in
+// any of the 3 modes actually depends on the ROS/rosbridge link — odom is
+// ignored (ros.js) and physics is computed locally — so the ROS connected/
+// disconnected indicator is meaningless there. Hidden whenever local sim is
+// on, in every mode; shown only on real Gazebo physics ("sim"), which does
+// need it. Kept in sync in updatePhysicsTelemetryPanels() below, since that
+// already runs on every mode switch and every sim/game toggle.
+const rosStatusEl = document.getElementById('status');
 // Camera panel's own header text — Mode 1/3 keep the "Object Detection"
 // framing (their perception overlay is still live there), Mode 2 is a plain
 // joystick-drive 3D view now (main.js skips drawDetectionOverlay() in Mode 2),
@@ -425,6 +433,7 @@ const mode2MotorPanel = document.getElementById('mode2-motor-panel');
 function updatePhysicsTelemetryPanels() {
     if (dofPanel) dofPanel.style.display = localSimEnabled ? 'none' : 'block';
     if (mode2MotorPanel) mode2MotorPanel.style.display = (activeAppMode === 2 && localSimEnabled) ? 'block' : 'none';
+    if (rosStatusEl) rosStatusEl.style.display = localSimEnabled ? 'none' : '';
 }
 
 // Fills the two Motor Power bars (index.html's #motor-bar-left/right) from
